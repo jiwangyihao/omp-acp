@@ -232,10 +232,10 @@ node scripts/smoke-acp.mjs
 
 **核心行为：**
 
-- 读取 stdin JSON-RPC request；
+- 通过 `src/acp/transport/stdio.ts` 的薄封装读取 stdin JSON-RPC request；该封装内部只调用 SDK `ndJsonStream`，不得自定义解析或分发；
 - 写出 stdout JSON-RPC response / notification；
 - stderr 只用于 diagnostics，不污染 stdout；
-- `initialize` 返回最小 capability set；
+- `initialize` 返回最小 truthful capability set；
 - 不支持的方法返回 JSON-RPC method-not-found，不静默成功。
 
 **验收标准：**
@@ -243,7 +243,7 @@ node scripts/smoke-acp.mjs
 - [ ] `node --import tsx src/index.ts` 可启动并等待 stdin；
 - [ ] smoke test 发送 `initialize` 后收到合法 JSON-RPC response；
 - [ ] `initialize` 不声明 MCP、session fork/resume/close、filesystem、terminal 等未实现能力；
-- [ ] malformed JSON 返回协议错误或关闭连接，行为有测试覆盖。
+- [ ] malformed JSON 不污染 stdout，且连接在随后合法 `initialize` 后仍可用；该行为有测试覆盖。
 
 ### 阶段 2：OMP RPC client 与进程生命周期
 

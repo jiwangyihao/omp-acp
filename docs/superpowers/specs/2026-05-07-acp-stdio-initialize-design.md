@@ -19,9 +19,11 @@
 
 - 当前仓库已安装 `@agentclientprotocol/sdk@0.12.0`。
 - SDK 提供 `AgentSideConnection`、`ndJsonStream`、`PROTOCOL_VERSION`、`RequestError` 和 ACP schema 类型。
-- SDK 的 `Agent` 接口要求实现 `initialize`、`newSession`、`authenticate`、`prompt`、`cancel`，其中 `loadSession`、`session/list`、`session/fork`、`session/resume` 等是可选方法。
+- SDK 的 `Agent` 接口要求实现 `initialize`、`newSession`、`authenticate`、`prompt`、`cancel`；可选接口成员为 `loadSession?`、`unstable_listSessions?`、`unstable_forkSession?`、`unstable_resumeSession?`，它们分别由 SDK 分发协议方法 `session/load`、`session/list`、`session/fork`、`session/resume`。
 - ACP schema 规定 baseline agent 应支持 `session/new`、`session/prompt`、`session/cancel` 和 `session/update`。阶段 1 只是内部里程碑，因此这些方法只提供明确的「尚不可用」错误保护；项目在阶段 3 前不得声称 ACP agent 可用。
 - stdout 必须只输出 JSON-RPC / NDJSON frame。所有日志、诊断、异常说明只能写入 stderr 或测试断言中。
+- 阶段 1 在当前 `omp-acp` 仓库工作区和主分支上实现。禁止创建 git worktree、禁止创建实现分支，除非用户在后续对话中显式改变该约束。
+- 阶段 1 实现前必须验证本地依赖可从 `@agentclientprotocol/sdk` 导入 `AgentSideConnection`、`ndJsonStream`、`PROTOCOL_VERSION`、`RequestError` 和所需 schema 类型。若 SDK runtime 或 types 不可导入，必须先修正依赖或更新本规格并重新审查；不得临时退回手写 JSON-RPC transport。
 
 ## 方案比较
 
@@ -42,7 +44,7 @@
 
 ### 方案 B：直接使用 SDK 的 `AgentSideConnection` 和 `ndJsonStream`
 
-用 SDK 负责 JSON-RPC framing、schema validation、method dispatch 和标准错误封装。项目只实现 `OmpAcpAgent`，并在 `initialize` 中返回 truthful capabilities。
+用 SDK 负责 JSON-RPC framing、incoming request schema validation、method dispatch 和标准错误封装。项目只实现 `OmpAcpAgent`，并在 `initialize` 中返回 truthful capabilities；response shape 由 TypeScript 类型、单元测试和 smoke test 共同约束。
 
 优点：
 
@@ -78,32 +80,52 @@
 
 `src/index.ts` 是 CLI 入口。它负责：
 
-1. 将 `process.stdout` 转为 Web `WritableStream`。
-2. 将 `process.stdin` 转为 Web `ReadableStream`。
-3. 调用 `ndJsonStream(stdout, stdin)` 创建 ACP stream。
-4. 创建 `AgentSideConnection`，传入 `createOmpAcpAgent`。
+1. 将 `process.stdout` 转为 Web `WritableStream`，命名为 `stdoutWritable`。
+2. 将 `process.stdin` 转为 Web `ReadableStream`，命名为 `stdinReadable`。
+3. 调用 `createStdioAcpStream(stdoutWritable, stdinReadable)` 创建 ACP stream。
+4. 调用 `startAcpServer({ stream })` 创建 `AgentSideConnection`。
 5. 等待 `connection.closed`，避免进程在 stdin 打开时提前退出。
 
 入口不得在 stdout 写任何 banner、日志或调试信息。
+
+### Stdio transport 薄封装：`src/acp/transport/stdio.ts`
+
+`stdio.ts` 只负责把已经转成 Web stream 的 output/input 交给 SDK：
+
+```ts
+export function createStdioAcpStream(
+  output: WritableStream<Uint8Array>,
+  input: ReadableStream<Uint8Array>,
+): Stream;
+```
+
+实现必须调用 SDK `ndJsonStream(output, input)`。本模块不得解析 JSON、不得分发 method、不得自定义 JSON-RPC 错误响应、不得写日志。这样既保留总体计划中的 transport 文件边界，也避免重复实现 SDK framing。
+
 
 ### Agent 组合根：`src/acp/server.ts`
 
 `server.ts` 暴露：
 
 ```ts
-export function startAcpServer(options?: StartAcpServerOptions): AgentSideConnection;
+export interface StartAcpServerOptions {
+  stream: Stream;
+}
+
+export function startAcpServer(options: StartAcpServerOptions): AgentSideConnection;
 export function createOmpAcpAgent(connection: AgentSideConnection): Agent;
 ```
+
+`startAcpServer` 只接受已经创建好的 ACP `Stream`，不直接读取 `process.stdin`，也不直接写入 `process.stdout`。`src/index.ts` 负责把 process stream 适配成 Web stream，并通过 `createStdioAcpStream` 生成 `Stream` 后传入 `startAcpServer`。diagnostics 不属于该接口；如需输出，只能由调用方写入 stderr，不能通过 ACP output stream 输出。
 
 阶段 1 中，`createOmpAcpAgent` 创建一个最小 agent：
 
 - `initialize`：返回协议版本、agent info、最小 capability set。
 - `newSession`：抛出明确错误，表示阶段 1 尚未接入 session manager。
-- `authenticate`：返回空结果或明确不可用；阶段 1 不声明 `authMethods`。
+- `authenticate`：阶段 1 不声明 `authMethods`，因此任何 `authenticate` 请求都必须返回 JSON-RPC error。不得返回 `{}`、`undefined` 或任何成功结果。
 - `prompt`：抛出明确错误，表示尚未接入 OMP runtime。
 - `cancel`：安全 no-op 或明确记录到 stderr；因为没有 active prompt，不能抛出会导致连接崩溃的异常。
 
-`newSession` 和 `prompt` 的错误必须是 JSON-RPC error，不得返回成功结果。
+`newSession`、`authenticate` 和 `prompt` 的错误必须是 JSON-RPC error，不得返回成功结果。
 
 ### 能力声明：`src/acp/capabilities.ts`
 
@@ -114,7 +136,7 @@ export function buildInitialAgentCapabilities(): AgentCapabilities;
 export function buildAgentInfo(): Implementation;
 ```
 
-阶段 1 的 `AgentCapabilities` 必须保守：
+阶段 1 的 `AgentCapabilities` 必须显式返回保守 false 值：
 
 ```ts
 {
@@ -141,7 +163,7 @@ export function buildAgentInfo(): Implementation;
 - permission request
 - terminal / filesystem delegation
 
-如果 SDK schema 不允许显式 `false`，则省略该字段；测试应以实际类型为准。核心要求是不得把未实现能力声明为可用。
+若未来升级 SDK 导致这些字段类型变化，必须先更新本规格和测试，再修改实现。核心要求是不得把未实现能力声明为可用。
 
 ### `initialize` handler：`src/acp/handlers/initialize.ts`
 
@@ -164,11 +186,25 @@ export function buildAgentInfo(): Implementation;
 |---|---|
 | 未知 request method | SDK 返回 JSON-RPC `-32601 Method not found` |
 | 未知 notification method | SDK 返回或记录 method-not-found，不中断进程 |
-| malformed JSON | 返回 JSON-RPC parse/invalid request 错误或关闭连接；测试只约束外部可观察行为 |
+| malformed JSON | SDK `ndJsonStream` 记录 parse failure 到 stderr、stdout 不输出非 JSON-RPC 内容、连接保持可用；测试必须在 malformed line 后继续发送合法 `initialize` 并收到响应 |
 | `session/new` | JSON-RPC error，说明 session 尚未实现 |
 | `session/prompt` | JSON-RPC error，说明 prompt 尚未实现 |
 | `session/cancel` 且无 active prompt | no-op，不写 stdout |
 | handler 抛出未预期异常 | JSON-RPC internal error；stderr 可记录 diagnostics |
+
+### TDD 红灯顺序
+
+阶段 1 实现必须按以下顺序先写失败测试，再写最少实现：
+
+1. `buildInitialAgentCapabilities` 不声明未实现能力，尤其 MCP、session list/load/fork/resume、filesystem、terminal、image、embedded context。
+2. `buildAgentInfo` 从 `package.json` 读取 `name` 和 `version`。
+3. `initialize` 返回 SDK `PROTOCOL_VERSION`、`agentInfo.name === "omp-acp"`、不返回 `authMethods`、capabilities 来自 builder。
+4. stdio initialize smoke 使用真实 subprocess，断言 response id、无 error、stdout 每行都是 JSON-RPC、stderr 无常规启动日志。
+5. unknown method negative smoke 返回同 id 的 `-32601 Method not found`。
+6. `session/new` guard negative smoke 返回 JSON-RPC error。
+7. `session/prompt` guard negative smoke 返回 JSON-RPC error。
+8. `authenticate` guard negative smoke 返回 JSON-RPC error。
+9. malformed JSON smoke 断言 stdout 不污染，且连接在随后合法 `initialize` 后仍可用。
 
 ### 测试设计
 
@@ -214,16 +250,18 @@ node --import tsx src/index.ts
 
 至少覆盖：
 
-- 发送未知 method，收到 JSON-RPC error。
-- 发送 malformed JSON，进程不输出非 JSON 文本到 stdout。
+- 发送未知 method，收到同 `id` 的 JSON-RPC `-32601 Method not found` error。
+- 发送 malformed JSON，stdout 不输出非 JSON-RPC 内容；随后发送合法 `initialize`，连接仍能返回合法响应。
 - 发送 `session/new`，收到 JSON-RPC error，而不是伪造成功 session。
+- 发送 `session/prompt`，收到 JSON-RPC error，而不是伪造成功 turn。
+- 发送 `authenticate`，收到 JSON-RPC error，而不是伪造成功认证。
 
 ## 数据流
 
 ```text
 Zed / test client
   -> stdin NDJSON request
-  -> ndJsonStream
+  -> createStdioAcpStream
   -> AgentSideConnection
   -> OmpAcpAgent.initialize
   -> buildInitialAgentCapabilities
@@ -252,5 +290,6 @@ Zed / test client
 - `docs/compatibility/capability-matrix.md` 与实际 `initialize` 输出一致。
 
 ## 后续衔接
+本规格经审查修正并通过后，阶段 1 可直接进入 TDD 实现；实现者不得再扩展阶段 1 范围。如审查发现 Critical/Important 问题，必须先更新本规格，再进入实现。
 
 阶段 1 完成后，阶段 2 可以独立实现 OMP RPC client。阶段 3 再把 `OmpAcpAgent.newSession`、`prompt` 和 `cancel` 从 guard handler 切换到真实 session manager。切换前必须先写 session 层测试，不能直接把 guard handler 改成半实现。
