@@ -35,6 +35,7 @@ function startAcpSubprocess(): RunningAcp {
 
   let stdoutBuffer = "";
   let stderr = "";
+  let protocolError: Error | undefined;
   const responses: JsonRpcObject[] = [];
   const waiters: Array<{
     resolve: (response: JsonRpcObject) => void;
@@ -46,6 +47,51 @@ function startAcpSubprocess(): RunningAcp {
     for (const waiter of waiters.splice(0)) {
       clearTimeout(waiter.timeout);
       waiter.reject(error);
+    }
+  }
+
+  function rememberProtocolError(error: Error) {
+    protocolError ??= error;
+    rejectAll(protocolError);
+  }
+
+  function parseStdoutMessage(trimmed: string): JsonRpcObject | undefined {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(trimmed);
+    } catch (error) {
+      rememberProtocolError(
+        new Error(
+          `stdout contained non-JSON-RPC content: ${trimmed}; parse error: ${String(error)}`,
+        ),
+      );
+      return undefined;
+    }
+
+    if (typeof parsed !== "object" || parsed === null) {
+      rememberProtocolError(new Error(`stdout contained non-object JSON-RPC content: ${trimmed}`));
+      return undefined;
+    }
+
+    const message = parsed as JsonRpcObject;
+    if (message.jsonrpc !== "2.0") {
+      rememberProtocolError(new Error(`stdout contained non-JSON-RPC message: ${trimmed}`));
+      return undefined;
+    }
+
+    return message;
+  }
+
+  function checkRemainingStdoutBuffer() {
+    const trimmed = stdoutBuffer.trim();
+    stdoutBuffer = "";
+    if (trimmed.length === 0) {
+      return;
+    }
+
+    const message = parseStdoutMessage(trimmed);
+    if (message) {
+      enqueueResponse(message);
     }
   }
 
@@ -71,24 +117,16 @@ function startAcpSubprocess(): RunningAcp {
         continue;
       }
 
-      let parsed: unknown;
-      try {
-        parsed = JSON.parse(trimmed);
-      } catch (error) {
-        rejectAll(
-          new Error(
-            `stdout contained non-JSON-RPC content: ${trimmed}; parse error: ${String(error)}`,
-          ),
-        );
+      const message = parseStdoutMessage(trimmed);
+      if (!message) {
         return;
       }
-
-      assert.equal(typeof parsed, "object");
-      assert.notEqual(parsed, null);
-      const message = parsed as JsonRpcObject;
-      assert.equal(message.jsonrpc, "2.0");
       enqueueResponse(message);
     }
+  });
+
+  child.stdout.once("close", () => {
+    checkRemainingStdoutBuffer();
   });
 
   child.stderr.setEncoding("utf8");
@@ -98,6 +136,11 @@ function startAcpSubprocess(): RunningAcp {
 
   child.once("error", (error) => rejectAll(error));
   child.once("exit", (code, signal) => {
+    checkRemainingStdoutBuffer();
+    if (protocolError) {
+      rejectAll(protocolError);
+      return;
+    }
     rejectAll(new Error(`ACP subprocess exited before response: code=${code} signal=${signal}`));
   });
 
@@ -112,6 +155,9 @@ function startAcpSubprocess(): RunningAcp {
       child.stdin.write(`${line}\n`);
     },
     nextResponse() {
+      if (protocolError) {
+        return Promise.reject(protocolError);
+      }
       const response = responses.shift();
       if (response) {
         return Promise.resolve(response);
@@ -131,8 +177,10 @@ function startAcpSubprocess(): RunningAcp {
     },
     async close() {
       rejectAll(new Error("ACP subprocess closed by test"));
-      if (!child.killed && child.exitCode === null) {
-        child.stdin.end();
+      if (child.exitCode === null) {
+        if (!child.stdin.destroyed && !child.stdin.writableEnded) {
+          child.stdin.end();
+        }
         const exited = once(child, "exit");
         const timeout = new Promise((resolve) => setTimeout(resolve, 1_000, "timeout"));
         if ((await Promise.race([exited, timeout])) === "timeout") {
@@ -140,7 +188,11 @@ function startAcpSubprocess(): RunningAcp {
           await once(child, "exit");
         }
       }
-    },
+      checkRemainingStdoutBuffer();
+      if (protocolError) {
+        throw protocolError;
+      }
+    }
   };
 }
 

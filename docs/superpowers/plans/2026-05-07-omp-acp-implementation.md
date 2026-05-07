@@ -216,6 +216,8 @@ node scripts/smoke-acp.mjs
 
 ### 阶段 1：ACP stdio transport 与 initialize
 
+**状态：** 已完成。README 与 capability matrix 已同步记录 ACP stdio transport 和 `initialize` 为已实现；本阶段仍不代表完整可用的 ACP agent。
+
 **目标：** 让 `omp-acp` 能作为 ACP subprocess 启动，完成 JSON-RPC stdio 握手和 truthful `initialize`。
 
 **自治边界：** 本阶段不启动 OMP，不处理 prompt，只实现 ACP 外壳和能力声明。
@@ -240,10 +242,10 @@ node scripts/smoke-acp.mjs
 
 **验收标准：**
 
-- [ ] `node --import tsx src/index.ts` 可启动并等待 stdin；
-- [ ] smoke test 发送 `initialize` 后收到合法 JSON-RPC response；
-- [ ] `initialize` 不声明 MCP、session fork/resume/close、filesystem、terminal 等未实现能力；
-- [ ] malformed JSON 不污染 stdout，且连接在随后合法 `initialize` 后仍可用；该行为有测试覆盖。
+- [x] `node --import tsx src/index.ts` 可启动并等待 stdin；
+- [x] smoke test 发送 `initialize` 后收到合法 JSON-RPC response；
+- [x] `initialize` 不声明 MCP、session fork/resume/close、filesystem、terminal 等未实现能力；
+- [x] malformed JSON 不污染 stdout，且连接在随后合法 `initialize` 后仍可用；该行为有测试覆盖。
 
 ### 阶段 2：OMP RPC client 与进程生命周期
 
@@ -473,11 +475,4 @@ node scripts/smoke-acp.mjs
 
 ## 7. 当前下一步
 
-推荐从两个自治任务同时开工：
-
-1. **阶段 1：ACP stdio transport 与 initialize**
-   - 产物是一个可被 Zed/stdio smoke 握手的最小 ACP server。
-2. **阶段 2：OMP RPC client 与进程生命周期**
-   - 产物是可靠的 OMP JSONL RPC client，不依赖 ACP server。
-
-完成后再进入阶段 3，将两条线通过 `RuntimeAdapter` 接口合并。
+阶段 1 已完成。当前下一步是进入 **阶段 2：OMP RPC client 与进程生命周期**，交付可靠的 OMP JSONL RPC client 与进程生命周期管理；阶段 3 需等待阶段 2 接口稳定后再把 ACP session handler 接入真实 runtime。
