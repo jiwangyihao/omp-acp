@@ -15,8 +15,8 @@
 
 | 能力 | 当前状态 | 声明策略 | 验证要求 |
 |---|---|---|---|
-| ACP stdio transport | 未实现 | 不可发布 | stdio smoke test |
-| `initialize` | 未实现 | 不声明额外能力 | initialize unit test + stdio smoke |
+| ACP stdio transport | 已实现 | 内部可用；发布仍需后续阶段 | `test/smoke/acp-stdio.test.ts` |
+| `initialize` | 已实现 | 只声明 conservative false capabilities；不声明额外能力 | `test/unit/acp/initialize.test.ts` + `test/smoke/acp-stdio.test.ts` |
 | `session/new` | 未实现 | 不声明 | session smoke test |
 | `session/prompt` text | 未实现 | 不声明 | prompt contract test |
 | `session/cancel` | 未实现 | 不声明 | cancel race test |
