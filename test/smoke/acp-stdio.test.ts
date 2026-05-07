@@ -36,6 +36,7 @@ function startAcpSubprocess(): RunningAcp {
   let stdoutBuffer = "";
   let stderr = "";
   let protocolError: Error | undefined;
+  let childClosed = false;
   const responses: JsonRpcObject[] = [];
   const waiters: Array<{
     resolve: (response: JsonRpcObject) => void;
@@ -135,13 +136,14 @@ function startAcpSubprocess(): RunningAcp {
   });
 
   child.once("error", (error) => rejectAll(error));
-  child.once("exit", (code, signal) => {
+  child.once("close", (code, signal) => {
+    childClosed = true;
     checkRemainingStdoutBuffer();
     if (protocolError) {
       rejectAll(protocolError);
       return;
     }
-    rejectAll(new Error(`ACP subprocess exited before response: code=${code} signal=${signal}`));
+    rejectAll(new Error(`ACP subprocess closed before response: code=${code} signal=${signal}`));
   });
 
   return {
@@ -177,15 +179,15 @@ function startAcpSubprocess(): RunningAcp {
     },
     async close() {
       rejectAll(new Error("ACP subprocess closed by test"));
-      if (child.exitCode === null) {
-        if (!child.stdin.destroyed && !child.stdin.writableEnded) {
-          child.stdin.end();
-        }
-        const exited = once(child, "exit");
+      if (child.exitCode === null && !child.stdin.destroyed && !child.stdin.writableEnded) {
+        child.stdin.end();
+      }
+      if (!childClosed) {
+        const closed = once(child, "close");
         const timeout = new Promise((resolve) => setTimeout(resolve, 1_000, "timeout"));
-        if ((await Promise.race([exited, timeout])) === "timeout") {
+        if ((await Promise.race([closed, timeout])) === "timeout") {
           child.kill();
-          await once(child, "exit");
+          await closed;
         }
       }
       checkRemainingStdoutBuffer();
