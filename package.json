@@ -1,0 +1,41 @@
+{
+  "name": "omp-acp",
+  "version": "0.0.0",
+  "description": "ACP adapter for the Oh My Pi coding agent.",
+  "license": "MIT",
+  "type": "module",
+  "private": true,
+  "main": "dist/index.js",
+  "bin": {
+    "omp-acp": "dist/index.js"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "dev": "tsx src/index.ts",
+    "build": "tsup",
+    "start": "node dist/index.js",
+    "typecheck": "tsc --noEmit",
+    "test": "node --import tsx --test",
+    "check": "npm run typecheck && npm test"
+  },
+  "dependencies": {
+    "@agentclientprotocol/sdk": "^0.12.0",
+    "zod": "^3.25.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsup": "^8.0.0",
+    "tsx": "^4.0.0",
+    "typescript": "^5.6.0"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  }
+}
