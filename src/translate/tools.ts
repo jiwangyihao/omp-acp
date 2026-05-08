@@ -71,16 +71,22 @@ export function normalizeToolKind(kind: unknown): ToolKind {
 export function toolExecutionStartToUpdate(raw: Record<string, unknown>): SessionUpdate {
   const toolCallId = extractToolCallId(raw);
   const name = typeof raw.toolName === "string" ? raw.toolName : typeof raw.name === "string" ? raw.name : toolCallId;
-
-  return omitUndefined({
-    sessionUpdate: "tool_call" as const,
+  const rawInput = raw.rawInput ?? raw.input;
+  const locations = extractLocations(raw);
+  const update: SessionUpdate = {
+    sessionUpdate: "tool_call",
     toolCallId,
     title: typeof raw.title === "string" ? raw.title : name,
     kind: normalizeToolKind(raw.kind ?? raw.name ?? raw.toolName),
     status: normalizeToolStatus(raw.status, "tool_execution_start"),
-    rawInput: raw.rawInput ?? raw.input,
-    locations: extractLocations(raw),
-  });
+  };
+  if (rawInput !== undefined) {
+    update.rawInput = rawInput;
+  }
+  if (locations !== undefined) {
+    update.locations = locations;
+  }
+  return update;
 }
 
 export function toolExecutionUpdateToUpdate(raw: Record<string, unknown>): SessionUpdate {
@@ -109,14 +115,22 @@ function toolExecutionProgressToUpdate(raw: Record<string, unknown>, eventType: 
     content.push(...diff);
   }
 
-  return omitUndefined({
-    sessionUpdate: "tool_call_update" as const,
+  const update: SessionUpdate = {
+    sessionUpdate: "tool_call_update",
     toolCallId: extractToolCallId(raw),
     status,
-    rawOutput,
-    content: content.length > 0 ? content : undefined,
-    locations: extractLocations(raw),
-  });
+  };
+  if (rawOutput !== undefined) {
+    update.rawOutput = rawOutput;
+  }
+  if (content.length > 0) {
+    update.content = content;
+  }
+  const locations = extractLocations(raw);
+  if (locations !== undefined) {
+    update.locations = locations;
+  }
+  return update;
 }
 
 function extractToolCallId(raw: Record<string, unknown>): string {
@@ -169,11 +183,3 @@ function firstString(...values: Array<unknown>): string | undefined {
   return values.find((value): value is string => typeof value === "string");
 }
 
-function omitUndefined<T extends Record<string, unknown>>(value: T): T {
-  for (const key of Object.keys(value)) {
-    if (value[key] === undefined) {
-      delete value[key];
-    }
-  }
-  return value;
-}
