@@ -63,7 +63,7 @@ function isThought(raw: Record<string, unknown>): boolean {
 }
 
 function hasThoughtMarker(value: Record<string, unknown>): boolean {
-  return isThoughtValue(value.kind) || isThoughtValue(value.role) || isThoughtValue(value.channel);
+  return isThoughtValue(value.type) || isThoughtValue(value.kind) || isThoughtValue(value.role) || isThoughtValue(value.channel);
 }
 
 function isThoughtValue(value: unknown): boolean {

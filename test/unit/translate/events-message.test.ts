@@ -30,6 +30,22 @@ test("translateRuntimeEventToSessionUpdate maps thought and reasoning updates to
     },
   );
   assert.deepEqual(
+    translateRuntimeEventToSessionUpdate(event("message_update", { type: "thought", content: "thinking" })),
+    {
+      sessionUpdate: "agent_thought_chunk",
+      content: { type: "text", text: "thinking" },
+    },
+  );
+  assert.deepEqual(
+    translateRuntimeEventToSessionUpdate(
+      event("message_update", { message: { type: "reasoning", text: "reasoning" } }),
+    ),
+    {
+      sessionUpdate: "agent_thought_chunk",
+      content: { type: "text", text: "reasoning" },
+    },
+  );
+  assert.deepEqual(
     translateRuntimeEventToSessionUpdate(
       event("message_update", { message: { text: "reasoning", channel: "reasoning" } }),
     ),
