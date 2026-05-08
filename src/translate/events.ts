@@ -17,6 +17,9 @@ export function translateRuntimeEventToSessionUpdate(event: RuntimeEvent): Sessi
     case "host_tool_cancel":
       return undefined;
     case "extension_ui_request":
+      if (isFireAndForgetExtensionUiRequest(event.raw)) {
+        return undefined;
+      }
       throw new UnsupportedRuntimeEventError(formatExtensionUiRequest(event.raw));
     case "tool_execution_start":
       return toolExecutionStartToUpdate(event.raw);
@@ -81,6 +84,20 @@ function isThoughtValue(value: unknown): boolean {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isFireAndForgetExtensionUiRequest(raw: Record<string, unknown>): boolean {
+  switch (raw.method) {
+    case "cancel":
+    case "notify":
+    case "setStatus":
+    case "setWidget":
+    case "setTitle":
+    case "set_editor_text":
+      return true;
+    default:
+      return false;
+  }
 }
 
 function formatExtensionError(raw: Record<string, unknown>): string {

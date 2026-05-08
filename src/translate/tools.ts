@@ -71,17 +71,21 @@ export function normalizeToolKind(kind: unknown): ToolKind {
 export function toolExecutionStartToUpdate(raw: Record<string, unknown>): SessionUpdate {
   const toolCallId = extractToolCallId(raw);
   const name = typeof raw.toolName === "string" ? raw.toolName : typeof raw.name === "string" ? raw.name : toolCallId;
-  const rawInput = raw.rawInput ?? raw.input;
+  const rawInput = extractRawInput(raw);
   const locations = extractLocations(raw);
   const update: SessionUpdate = {
     sessionUpdate: "tool_call",
     toolCallId,
-    title: typeof raw.title === "string" ? raw.title : name,
+    title: typeof raw.title === "string" ? raw.title : buildToolTitle(name, rawInput),
     kind: normalizeToolKind(raw.kind ?? raw.name ?? raw.toolName),
     status: normalizeToolStatus(raw.status, "tool_execution_start"),
   };
   if (rawInput !== undefined) {
     update.rawInput = rawInput;
+  }
+  const startContent = buildToolStartContent(name, rawInput);
+  if (startContent.length > 0) {
+    update.content = startContent;
   }
   if (locations !== undefined) {
     update.locations = locations;
@@ -165,6 +169,12 @@ function normalizeRawOutput(raw: Record<string, unknown>): unknown {
   if (raw.rawOutput !== undefined) {
     return raw.rawOutput;
   }
+  if (raw.partialResult !== undefined) {
+    return raw.partialResult;
+  }
+  if (raw.result !== undefined) {
+    return raw.result;
+  }
   if (raw.output !== undefined) {
     return raw.output;
   }
@@ -175,8 +185,100 @@ function normalizeRawOutput(raw: Record<string, unknown>): unknown {
 }
 
 function extractContent(raw: Record<string, unknown>): NonNullable<Extract<SessionUpdate, { sessionUpdate: "tool_call_update" }>["content"]> {
+  const content: NonNullable<Extract<SessionUpdate, { sessionUpdate: "tool_call_update" }>["content"]> = [];
   const text = firstString(raw.content, raw.output, raw.rawOutput);
-  return text === undefined ? [] : [{ type: "content", content: { type: "text", text } }];
+  if (text !== undefined) {
+    content.push(textToolContent(text));
+  }
+  content.push(...extractToolResultContent(raw.partialResult));
+  content.push(...extractToolResultContent(raw.result));
+  return content;
+}
+
+function extractRawInput(raw: Record<string, unknown>): unknown {
+  return raw.rawInput ?? raw.input ?? raw.args;
+}
+
+function buildToolTitle(name: string, rawInput: unknown): string {
+  const label = formatToolLabel(name);
+  const summary = summarizeToolInput(name, rawInput);
+  return summary === undefined ? label : `${label}: ${summary}`;
+}
+
+function formatToolLabel(name: string): string {
+  switch (name) {
+    case "bash":
+    case "shell":
+      return "Bash";
+    case "read":
+    case "read_file":
+      return "Read";
+    case "write":
+    case "patch":
+    case "edit":
+      return "Edit";
+    case "grep":
+    case "search":
+      return "Search";
+    default:
+      return name;
+  }
+}
+
+function summarizeToolInput(name: string, rawInput: unknown): string | undefined {
+  if (!isRecord(rawInput)) {
+    return undefined;
+  }
+
+  if ((name === "bash" || name === "shell") && typeof rawInput.command === "string") {
+    return compactOneLine(rawInput.command);
+  }
+
+  for (const key of ["path", "file", "uri", "url", "query", "pattern", "command", "message"]) {
+    const value = rawInput[key];
+    if (typeof value === "string" && value.length > 0) {
+      return compactOneLine(value);
+    }
+  }
+
+  return undefined;
+}
+
+function buildToolStartContent(name: string, rawInput: unknown): NonNullable<Extract<SessionUpdate, { sessionUpdate: "tool_call" }>["content"]> {
+  if (!isRecord(rawInput)) {
+    return [];
+  }
+  if ((name === "bash" || name === "shell") && typeof rawInput.command === "string") {
+    return [textToolContent(`$ ${rawInput.command}`)];
+  }
+  return [];
+}
+
+function extractToolResultContent(value: unknown): NonNullable<Extract<SessionUpdate, { sessionUpdate: "tool_call_update" }>["content"]> {
+  if (!isRecord(value) || !Array.isArray(value.content)) {
+    return [];
+  }
+
+  const content: NonNullable<Extract<SessionUpdate, { sessionUpdate: "tool_call_update" }>["content"]> = [];
+  for (const item of value.content) {
+    if (isRecord(item) && item.type === "text" && typeof item.text === "string") {
+      content.push(textToolContent(item.text));
+    }
+  }
+  return content;
+}
+
+function textToolContent(text: string): NonNullable<Extract<SessionUpdate, { sessionUpdate: "tool_call_update" }>["content"]>[number] {
+  return { type: "content", content: { type: "text", text } };
+}
+
+function compactOneLine(value: string): string {
+  const compact = value.replace(/\s+/g, " ").trim();
+  return compact.length > 160 ? `${compact.slice(0, 157)}...` : compact;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function firstString(...values: Array<unknown>): string | undefined {

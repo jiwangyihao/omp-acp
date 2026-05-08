@@ -545,6 +545,28 @@ serialSmokeTest("runtime extension_ui_request fails session/prompt without assis
     );
   });
 });
+
+serialSmokeTest("runtime fire-and-forget extension_ui_request does not fail session/prompt", async () => {
+  await withAcpSubprocess("extension-ui-set-widget", async (acp) => {
+    const sessionId = await initializeAndCreateSession(acp, 37, 38);
+
+    acp.send({
+      jsonrpc: "2.0",
+      id: 39,
+      method: "session/prompt",
+      params: { sessionId, prompt: [{ type: "text", text: "set widget" }] },
+    });
+
+    const update = await acp.nextMessage();
+    const response = await acp.nextMessage();
+
+    assert.equal(update.method, "session/update");
+    assert.equal(updateKind(update), "agent_message_chunk");
+    assert.equal(textFromUpdate(update), "widget ignored");
+    assert.equal(response.id, 39);
+    assert.deepEqual(response.result, { stopReason: "end_turn" });
+  });
+});
 serialSmokeTest("session/prompt streams message and thought updates before returning", async () => {
   await withAcpSubprocess("session-happy", async (acp) => {
     const sessionId = await initializeAndCreateSession(acp, 1, 2);
@@ -731,14 +753,15 @@ serialSmokeTest("session/prompt forwards runtime tool execution updates before r
     assert.deepEqual(sessionUpdate(start), {
       sessionUpdate: "tool_call",
       toolCallId: "tool_smoke_1",
-      title: "Read config",
-      kind: "read",
+      title: "Bash: npm run check",
+      kind: "execute",
       status: "in_progress",
-      rawInput: { path: "config.json" },
-      locations: [{ path: "config.json", line: 3 }],
+      rawInput: { command: "npm run check", cwd: "C:/repo" },
+      content: [{ type: "content", content: { type: "text", text: "$ npm run check" } }],
     });
     assert.equal(updateKind(textUpdate), "tool_call_update");
-    assert.deepEqual(sessionUpdate(textUpdate)?.content, [{ type: "content", content: { type: "text", text: "reading config" } }]);
+    assert.deepEqual(sessionUpdate(textUpdate)?.content, [{ type: "content", content: { type: "text", text: "running config check" } }]);
+    assert.deepEqual(sessionUpdate(textUpdate)?.rawOutput, { content: [{ type: "text", text: "running config check" }], details: { exitCode: 0 } });
     assert.equal(updateKind(diffUpdate), "tool_call_update");
     assert.deepEqual(sessionUpdate(diffUpdate)?.content, [
       { type: "diff", path: "config.json", oldText: "old", newText: "new" },
@@ -747,7 +770,7 @@ serialSmokeTest("session/prompt forwards runtime tool execution updates before r
       sessionUpdate: "tool_call_update",
       toolCallId: "tool_smoke_1",
       status: "completed",
-      rawOutput: "done",
+      rawOutput: { content: [{ type: "text", text: "done" }], details: { exitCode: 0 } },
       content: [{ type: "content", content: { type: "text", text: "done" } }],
     });
     assert.equal(response.id, 22);

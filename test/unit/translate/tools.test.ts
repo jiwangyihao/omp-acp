@@ -62,6 +62,27 @@ test("toolExecutionStartToUpdate maps start event to ACP tool_call", () => {
   );
 });
 
+test("toolExecutionStartToUpdate preserves OMP args and summarizes bash command", () => {
+  assert.deepEqual(
+    toolExecutionStartToUpdate({
+      type: "tool_execution_start",
+      toolCallId: "call-bash",
+      toolName: "bash",
+      args: { command: "npm run check", cwd: "/repo" },
+      status: "running",
+    }),
+    {
+      sessionUpdate: "tool_call",
+      toolCallId: "call-bash",
+      title: "Bash: npm run check",
+      kind: "execute",
+      status: "in_progress",
+      rawInput: { command: "npm run check", cwd: "/repo" },
+      content: [{ type: "content", content: { type: "text", text: "$ npm run check" } }],
+    },
+  );
+});
+
 test("toolExecutionUpdateToUpdate wraps text content, rawOutput, and locations", () => {
   assert.deepEqual(
     toolExecutionUpdateToUpdate({
@@ -80,6 +101,52 @@ test("toolExecutionUpdateToUpdate wraps text content, rawOutput, and locations",
       rawOutput: { bytes: 4 },
       content: [{ type: "content", content: { type: "text", text: "done" } }],
       locations: [{ path: "/repo/file.ts", line: 11 }],
+    },
+  );
+});
+
+test("toolExecutionUpdateToUpdate extracts OMP partialResult text", () => {
+  const partialResult = {
+    content: [{ type: "text", text: "running command" }],
+    details: { exitCode: 0 },
+  };
+
+  assert.deepEqual(
+    toolExecutionUpdateToUpdate({
+      type: "tool_execution_update",
+      toolCallId: "call-output",
+      status: "running",
+      partialResult,
+    }),
+    {
+      sessionUpdate: "tool_call_update",
+      toolCallId: "call-output",
+      status: "in_progress",
+      rawOutput: partialResult,
+      content: [{ type: "content", content: { type: "text", text: "running command" } }],
+    },
+  );
+});
+
+test("toolExecutionEndToUpdate extracts OMP result text", () => {
+  const result = {
+    content: [{ type: "text", text: "command finished" }],
+    details: { exitCode: 0 },
+  };
+
+  assert.deepEqual(
+    toolExecutionEndToUpdate({
+      type: "tool_execution_end",
+      toolCallId: "call-result",
+      status: "completed",
+      result,
+    }),
+    {
+      sessionUpdate: "tool_call_update",
+      toolCallId: "call-result",
+      status: "completed",
+      rawOutput: result,
+      content: [{ type: "content", content: { type: "text", text: "command finished" } }],
     },
   );
 });

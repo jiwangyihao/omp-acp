@@ -78,12 +78,25 @@ test("translateRuntimeEventToSessionUpdate leaves host tool events for the sessi
   assert.equal(translateRuntimeEventToSessionUpdate(event("host_tool_cancel", { targetId: "host-1" })), undefined);
 });
 
-test("translateRuntimeEventToSessionUpdate fails extension_ui_request with method and id", () => {
+test("translateRuntimeEventToSessionUpdate ignores fire-and-forget extension UI state updates", () => {
+  assert.equal(
+    translateRuntimeEventToSessionUpdate(
+      event("extension_ui_request", { method: "setWidget", id: "ui-1", widgetKey: "autoresearch", widgetLines: [] }),
+    ),
+    undefined,
+  );
+  assert.equal(
+    translateRuntimeEventToSessionUpdate(event("extension_ui_request", { method: "setStatus", id: "ui-2", statusKey: "x" })),
+    undefined,
+  );
+});
+
+test("translateRuntimeEventToSessionUpdate fails interactive extension_ui_request with method and id", () => {
   assert.throws(
-    () => translateRuntimeEventToSessionUpdate(event("extension_ui_request", { method: "pick", id: "ui-1" })),
+    () => translateRuntimeEventToSessionUpdate(event("extension_ui_request", { method: "select", id: "ui-1" })),
     (error) => error instanceof UnsupportedRuntimeEventError
       && /extension_ui_request/.test(error.message)
-      && /pick/.test(error.message)
+      && /select/.test(error.message)
       && /ui-1/.test(error.message),
   );
 });

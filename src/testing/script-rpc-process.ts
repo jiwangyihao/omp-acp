@@ -191,6 +191,14 @@ function handleRequest(request: JsonObject): void {
       writeFrame({ type: "extension_ui_request", method: "showDialog", id: "ui-smoke-1" });
       return;
     }
+
+    if (scenario === "extension-ui-set-widget") {
+      writeSuccess(id, command, { ok: true });
+      writeFrame({ type: "extension_ui_request", method: "setWidget", id: "ui-widget-1", widgetKey: "autoresearch", widgetLines: ["status"] });
+      writeFrame({ type: "message_update", content: "widget ignored" });
+      writeAgentEnd();
+      return;
+    }
     if (scenario === "session-cancel") {
       writeSuccess(id, command, { ok: true });
       pendingCancelPrompt = { id, params: request };
@@ -206,15 +214,22 @@ function handleRequest(request: JsonObject): void {
 
     if (scenario === "session-tool-events") {
       writeSuccess(id, command, { ok: true });
-      writeFrame({ type: "tool_execution_start", toolCallId: "tool_smoke_1", name: "read_file", title: "Read config", status: "running", input: { path: "config.json" }, path: "config.json", line: 3 });
-      writeFrame({ type: "tool_execution_update", toolCallId: "tool_smoke_1", status: "running", content: "reading config", path: "config.json", line: 3 });
+      writeFrame({ type: "tool_execution_start", toolCallId: "tool_smoke_1", toolName: "bash", args: { command: "npm run check", cwd: "C:/repo" }, status: "running" });
+      writeFrame({
+        type: "tool_execution_update",
+        toolCallId: "tool_smoke_1",
+        toolName: "bash",
+        args: { command: "npm run check", cwd: "C:/repo" },
+        status: "running",
+        partialResult: { content: [{ type: "text", text: "running config check" }], details: { exitCode: 0 } },
+      });
       writeFrame({
         type: "tool_execution_update",
         toolCallId: "tool_smoke_1",
         status: "running",
         diff: { path: "config.json", oldText: "old", newText: "new" },
       });
-      writeFrame({ type: "tool_execution_end", toolCallId: "tool_smoke_1", status: "completed", output: "done" });
+      writeFrame({ type: "tool_execution_end", toolCallId: "tool_smoke_1", status: "completed", result: { content: [{ type: "text", text: "done" }], details: { exitCode: 0 } } });
       writeAgentEnd();
       return;
     }
