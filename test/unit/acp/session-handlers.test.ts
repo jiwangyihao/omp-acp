@@ -114,6 +114,16 @@ async function createSession(harness = createHarness()) {
   return { ...harness, response, runtime: harness.runtimes[0]! };
 }
 
+async function waitForCondition(predicate: () => boolean): Promise<void> {
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    if (predicate()) {
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+  assert.equal(predicate(), true);
+}
+
 test("session/new returns the created session id", async () => {
   const { manager, runtimes, inputs } = createHarness();
 
@@ -189,10 +199,76 @@ test("cancel while prompt pending returns cancelled, requests runtime cancel, su
 
   runtime.emit({ type: "event", eventType: "message_update", raw: { content: "too late" } });
   runtime.promptDeferreds[0]!.resolve({});
-  await Promise.resolve();
+  await waitForCondition(() => runtime.listeners.size === 0);
 
   assert.deepEqual(connection.updates, []);
   assert.equal(runtime.listeners.size, 0);
+});
+
+test("cancelled prompt retains ownership until runtime prompt settles", async () => {
+  const { manager, connection, runtime } = await createSession();
+
+  const firstPrompt = handleSessionPrompt(promptRequest(), { manager, connection });
+  await handleSessionCancel({ sessionId: "session-1" }, manager);
+
+  assert.deepEqual(await firstPrompt, { stopReason: "cancelled" });
+
+  const secondPrompt = handleSessionPrompt(promptRequest({ prompt: [{ type: "text", text: "second" }] }), { manager, connection });
+  await Promise.resolve();
+  assert.equal(runtime.promptDeferreds.length, 1, "second prompt must be rejected before reaching runtime");
+  await assert.rejects(secondPrompt, /active prompt/);
+
+  runtime.emit({ type: "event", eventType: "message_update", raw: { content: "too late" } });
+  assert.deepEqual(connection.updates, []);
+
+  runtime.promptDeferreds[0]!.resolve({});
+  await waitForCondition(() => runtime.listeners.size === 0);
+
+  const thirdPrompt = handleSessionPrompt(promptRequest({ prompt: [{ type: "text", text: "third" }] }), { manager, connection });
+  assert.equal(runtime.promptDeferreds.length, 2);
+  runtime.promptDeferreds[1]!.resolve({});
+  assert.deepEqual(await thirdPrompt, { stopReason: "end_turn" });
+});
+
+test("normal prompt drains updates appended while earlier deliveries are pending", async () => {
+  const { manager, connection, runtime } = await createSession();
+
+  const promptPromise = handleSessionPrompt(promptRequest(), { manager, connection });
+  runtime.emit({ type: "event", eventType: "message_update", raw: { content: "first" } });
+  runtime.promptDeferreds[0]!.resolve({});
+  await new Promise<void>((resolve) => setImmediate(resolve));
+
+  runtime.emit({ type: "event", eventType: "message_update", raw: { content: "second" } });
+
+  let settled = false;
+  promptPromise.then(() => {
+    settled = true;
+  });
+
+  connection.updateDeferreds[0]!.resolve();
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.equal(settled, false);
+
+  connection.updateDeferreds[1]!.resolve();
+  assert.deepEqual(await promptPromise, { stopReason: "end_turn" });
+  assert.deepEqual(
+    connection.updates.map((entry) => entry.update),
+    [
+      { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "first" } },
+      { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "second" } },
+    ],
+  );
+});
+
+test("event translation failure stops accepting same-turn assistant updates", async () => {
+  const { manager, connection, runtime } = await createSession();
+
+  const promptPromise = handleSessionPrompt(promptRequest(), { manager, connection });
+  runtime.emit({ type: "event", eventType: "extension_error", raw: { message: "boom" } });
+  runtime.emit({ type: "event", eventType: "message_update", raw: { content: "should not forward" } });
+
+  await assert.rejects(promptPromise, /Runtime extension error: boom/);
+  assert.deepEqual(connection.updates, []);
 });
 
 test("concurrent prompt rejects", async () => {

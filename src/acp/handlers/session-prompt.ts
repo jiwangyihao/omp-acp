@@ -19,13 +19,14 @@ export async function handleSessionPrompt(
 ): Promise<PromptResponse> {
   const { session, cancellation, finish } = manager.beginPrompt(params.sessionId);
   const updatePromises: Promise<void>[] = [];
+  let acceptingEvents = true;
   let failPrompt: (reason: unknown) => void = () => {};
   const eventFailure = new Promise<never>((_, reject) => {
     failPrompt = reject;
   });
 
   const unsubscribe = session.runtime.onEvent((event: RuntimeEvent) => {
-    if (cancellation.isCancelled) {
+    if (cancellation.isCancelled || !acceptingEvents) {
       return;
     }
 
@@ -33,6 +34,7 @@ export async function handleSessionPrompt(
     try {
       update = translateRuntimeEventToSessionUpdate(event);
     } catch (error) {
+      acceptingEvents = false;
       failPrompt(error);
       return;
     }
@@ -40,10 +42,12 @@ export async function handleSessionPrompt(
     if (update !== undefined) {
       const delivery = connection.sessionUpdate({ sessionId: params.sessionId, update });
       updatePromises.push(delivery);
-      delivery.catch(failPrompt);
+      delivery.catch((error) => {
+        acceptingEvents = false;
+        failPrompt(error);
+      });
     }
   });
-
 
   try {
     const translated = translatePromptToOmpRequest(params);
@@ -56,18 +60,44 @@ export async function handleSessionPrompt(
     ]);
 
     if (result === "cancelled") {
-      runtimePromise.catch(() => {});
+      runtimePromise.then(
+        () => {
+          acceptingEvents = false;
+          unsubscribe();
+          finish();
+        },
+        () => {
+          acceptingEvents = false;
+          unsubscribe();
+          finish();
+        },
+      );
       return { stopReason: "cancelled" };
     }
 
     if (cancellation.isCancelled) {
+      acceptingEvents = false;
+      unsubscribe();
+      finish();
       return { stopReason: "cancelled" };
     }
 
-    await Promise.all(updatePromises);
+    await drainUpdatePromises(updatePromises);
     return { stopReason: "end_turn" };
   } finally {
-    unsubscribe();
-    finish();
+    if (!cancellation.isCancelled) {
+      acceptingEvents = false;
+      unsubscribe();
+      finish();
+    }
+  }
+}
+
+async function drainUpdatePromises(updatePromises: Promise<void>[]): Promise<void> {
+  let drainedCount = 0;
+  while (drainedCount < updatePromises.length) {
+    const pendingUpdates = updatePromises.slice(drainedCount);
+    drainedCount = updatePromises.length;
+    await Promise.all(pendingUpdates);
   }
 }
