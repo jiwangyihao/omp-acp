@@ -10,7 +10,7 @@
 | `npm run build` | 通过 | `tsup src/index.ts --format esm --platform node --target node20 --clean` 生成 `dist/index.js` |
 | stdio smoke | 通过 | `npm run smoke:acp` 使用 build output 和 fixture runtime 完成 initialize/new/prompt |
 | 真实 `omp --mode rpc` ready smoke | 通过 | `omp --version` 输出 `omp/14.7.6`；`omp --mode rpc` 输出 ready frame |
-| Zed 手工 smoke | 未执行 | 当前环境 `zed --version` 返回 `command not found` |
+| Zed 手工 smoke | 未执行 | 已安装隔离用官方 Zed：`C:/Users/34404/AppData/Local/Programs/Zed/bin/zed.exe --version` 输出 `Zed 1.1.6 ...`；`zed` 仍未加入当前 PATH；GUI 手工步骤尚未执行 |
 
 ## 必须保持的发布边界
 
@@ -30,6 +30,14 @@
 ## Zed 手工门禁
 
 执行 `scripts/smoke-zed.md`，并记录：
+
+本机隔离执行建议使用官方 Zed 的独立 user data 目录，避免影响常用的汉化版 ZedG：
+
+```bash
+"C:/Users/34404/AppData/Local/Programs/Zed/bin/zed.exe" --user-data-dir "C:/Users/34404/AppData/Local/Zed-OMP-ACP-Smoke" "C:/Users/34404/source/repos/omp-acp"
+```
+
+如果当前 shell 无法解析 `zed`，使用上面的绝对路径。
 
 - [ ] new thread。
 - [ ] text prompt。

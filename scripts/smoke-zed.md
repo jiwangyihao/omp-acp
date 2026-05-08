@@ -9,6 +9,7 @@
 - `omp --version` 可在启动 Zed 的环境中解析。
 - 不使用 `OMP_ACP_RUNTIME_COMMAND`、`OMP_ACP_RUNTIME_ARGS_JSON` 或 `OMP_ACP_AGENT_DIR` fixture seam。
 - Zed 配置使用本地 checkout 的 build output，而不是未发布的 `npx` 包。
+- 如需隔离常用的汉化版 ZedG，使用官方 Zed 的 `--user-data-dir` 指向独立目录，例如 `C:/Users/34404/AppData/Local/Zed-OMP-ACP-Smoke`。
 
 示例配置：
 
@@ -25,6 +26,12 @@
     }
   }
 }
+```
+
+隔离启动命令：
+
+```bash
+"C:/Users/34404/AppData/Local/Programs/Zed/bin/zed.exe" --user-data-dir "C:/Users/34404/AppData/Local/Zed-OMP-ACP-Smoke" "C:/Users/34404/source/repos/omp-acp"
 ```
 
 ## 执行步骤

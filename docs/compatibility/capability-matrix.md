@@ -54,7 +54,7 @@
 4. 真实 `omp --mode rpc` ready smoke 通过，或在 `docs/release-checklist.md` 记录不可用原因；
 5. `scripts/smoke-zed.md` 中的 Zed 手工 smoke 全部通过。
 
-当前环境中 `zed --version` 不可用，因此 Zed 手工 smoke 仍是发布阻塞项。
+当前环境已安装官方 Zed 1.1.6，可用绝对路径 `C:/Users/34404/AppData/Local/Programs/Zed/bin/zed.exe` 启动；Zed 手工 smoke 仍需按 `scripts/smoke-zed.md` 在 GUI 中执行，因此仍是发布阻塞项。
 
 ## 更新规则
 
