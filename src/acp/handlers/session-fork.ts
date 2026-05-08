@@ -10,9 +10,22 @@ import { SessionManager, SessionManagerError } from "../../session/manager.ts";
 export type SessionForkHandlerOptions = {
   agentDir?: string;
   forkSessionFile?: typeof forkOmpSessionFile;
+  removeForkFile?: typeof rm;
 };
 
 const ACTIVE_PROMPT_MESSAGE = "Cannot fork a session with an active prompt";
+
+async function removeForkFileAfterFailure(
+  path: string,
+  forkError: unknown,
+  removeForkFile: typeof rm,
+): Promise<void> {
+  try {
+    await removeForkFile(path, { force: true });
+  } catch (cleanupError) {
+    throw new AggregateError([forkError, cleanupError], `Fork session failed and cleanup failed for ${path}`);
+  }
+}
 
 export async function handleSessionFork(
   params: ForkSessionRequest,
@@ -40,6 +53,7 @@ export async function handleSessionFork(
 
     const forkId = manager.reserveSessionId();
     const forkSessionFile = options.forkSessionFile ?? forkOmpSessionFile;
+    const removeForkFile = options.removeForkFile ?? rm;
     let fork: Awaited<ReturnType<typeof forkOmpSessionFile>> | undefined;
 
     try {
@@ -63,7 +77,7 @@ export async function handleSessionFork(
       });
     } catch (error) {
       if (fork !== undefined) {
-        await rm(fork.path, { force: true });
+        await removeForkFileAfterFailure(fork.path, error, removeForkFile);
       }
       throw error;
     }

@@ -206,6 +206,7 @@ describe("forkOmpSessionFile", () => {
     });
 
     const [headerLine] = (await readFile(result.path, "utf8")).split(/\r?\n/);
+    assert.ok(headerLine);
     assert.equal(JSON.parse(headerLine).parentSession, "source-session");
 
     const listed = await listOmpSessions({ cwd: "/project", agentDir });

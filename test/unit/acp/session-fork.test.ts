@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -68,9 +68,7 @@ function forkRequest(cwd: string, overrides: Partial<ForkSessionRequest> = {}): 
 }
 
 async function tempAgentDir(): Promise<string> {
-  return await mkdir(join(tmpdir(), `omp-acp-fork-agent-${process.pid}-${Date.now()}-${Math.random()}`), { recursive: true }).then(
-    (path) => path,
-  );
+  return await mkdtemp(join(tmpdir(), "omp-acp-fork-agent-"));
 }
 
 async function writeSession(agentDir: string, cwd: string, sessionId: string, entries: unknown[]): Promise<string> {
@@ -184,4 +182,32 @@ test("forkSession does not publish a fork and removes fork file when switch_sess
   await assert.rejects(handleSessionFork(forkRequest(cwd), manager, { agentDir }), /Runtime failed to become ready/);
   assert.throws(() => manager.requireSession("fork-session"), /Unknown session/);
   assert.equal(await findOmpSessionById("fork-session", { agentDir }), undefined);
+});
+
+test("forkSession preserves fork failure details when cleanup fails", async () => {
+  const agentDir = await tempAgentDir();
+  const cwd = join(tmpdir(), "fork-cleanup-failure");
+  await writeSession(agentDir, cwd, "source-session", [{ type: "session", id: "source-session", cwd }]);
+  const { manager } = createHarness({ switchSessionFailure: new Error("switch failed") });
+
+  await assert.rejects(
+    handleSessionFork(forkRequest(cwd), manager, {
+      agentDir,
+      removeForkFile: async () => {
+        throw new Error("cleanup failed");
+      },
+    }),
+    (error) => {
+      assert.equal(error instanceof AggregateError, true);
+      const aggregate = error as AggregateError;
+      assert.match(aggregate.message, /Fork session failed and cleanup failed for/);
+      assert.deepEqual(
+        aggregate.errors.map((nestedError) => (nestedError as Error).message),
+        ["Runtime failed to become ready for session fork-session", "cleanup failed"],
+      );
+      assert.match(((aggregate.errors[0] as Error).cause as Error).message, /switch failed/);
+      return true;
+    },
+  );
+  assert.throws(() => manager.requireSession("fork-session"), /Unknown session/);
 });
