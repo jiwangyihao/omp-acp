@@ -39,6 +39,8 @@ export class SessionManager {
   readonly #runtimeFactory: RuntimeFactory;
   readonly #idGenerator: () => string;
   readonly #sessions = new Map<string, SessionRecord>();
+  readonly #pendingRuntimes = new Set<RuntimeAdapter>();
+  #cleanupGeneration = 0;
 
   constructor(options: SessionManagerOptions) {
     this.#runtimeFactory = options.runtimeFactory;
@@ -53,14 +55,22 @@ export class SessionManager {
       sessionId,
     };
     const runtime = this.#runtimeFactory(input);
+    const cleanupGeneration = this.#cleanupGeneration;
+    this.#pendingRuntimes.add(runtime);
 
     try {
       await runtime.ready;
     } catch (cause) {
-      await runtime.close();
+      if (this.#pendingRuntimes.delete(runtime)) {
+        await runtime.close();
+      }
       throw new SessionManagerError(`Runtime failed to become ready for session ${sessionId}`, { cause });
     }
 
+    this.#pendingRuntimes.delete(runtime);
+    if (cleanupGeneration !== this.#cleanupGeneration) {
+      throw new SessionManagerError(`Session creation was cancelled during cleanup for session ${sessionId}`);
+    }
     this.#sessions.set(sessionId, {
       sessionId,
       cwd: params.cwd,
@@ -111,14 +121,20 @@ export class SessionManager {
   }
 
   async closeAll(): Promise<void> {
+    this.#cleanupGeneration += 1;
     const sessions = Array.from(this.#sessions.values());
+    const pendingRuntimes = Array.from(this.#pendingRuntimes);
     this.#sessions.clear();
+    this.#pendingRuntimes.clear();
 
     for (const session of sessions) {
       session.activePrompt?.cancellation.cancel();
       session.activePrompt = undefined;
     }
 
-    await Promise.all(sessions.map((session) => session.runtime.close()));
+    await Promise.all([
+      ...sessions.map((session) => session.runtime.close()),
+      ...pendingRuntimes.map((runtime) => runtime.close()),
+    ]);
   }
 }

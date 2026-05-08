@@ -104,6 +104,20 @@ test("createSession closes runtime and rejects with SessionManagerError when rea
   assert.throws(() => manager.requireSession("session-1"), SessionManagerError);
 });
 
+test("closeAll closes pending runtime and prevents later session publish", async () => {
+  const { manager, runtimes } = createManager();
+
+  const createPromise = manager.createSession(newSessionRequest());
+  assert.equal(runtimes.length, 1);
+
+  await manager.closeAll();
+  assert.equal(runtimes[0]!.closeCalls, 1);
+
+  runtimes[0]!.readyDeferred.resolve();
+  await assert.rejects(createPromise, SessionManagerError);
+  assert.throws(() => manager.requireSession("session-1"), SessionManagerError);
+});
+
 test("requireSession throws SessionManagerError for unknown sessions", () => {
   const { manager } = createManager();
 
