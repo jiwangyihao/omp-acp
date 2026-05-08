@@ -5,7 +5,7 @@ import { join } from "node:path";
 import test from "node:test";
 
 const repoRoot = join(import.meta.dirname, "../..");
-const fixturePath = "src/testing/script-rpc-process.ts";
+const fixturePath = join(repoRoot, "src/testing/script-rpc-process.ts");
 const subprocessArgs = ["--import", "tsx", "src/index.ts"];
 
 type JsonRpcObject = {
@@ -240,18 +240,23 @@ function initializeRequest(id: number) {
   };
 }
 
-async function initializeAndCreateSession(acp: RunningAcp, initializeId: number, sessionId: number): Promise<string> {
+async function initializeAndCreateSession(
+  acp: RunningAcp,
+  initializeId: number,
+  sessionRequestId: number,
+  cwd = repoRoot,
+): Promise<string> {
   acp.send(initializeRequest(initializeId));
   const initializeResponse = await acp.nextResponse(initializeId);
   assert.equal(initializeResponse.error, undefined);
 
   acp.send({
     jsonrpc: "2.0",
-    id: sessionId,
+    id: sessionRequestId,
     method: "session/new",
-    params: { cwd: repoRoot, mcpServers: [] },
+    params: { cwd, mcpServers: [] },
   });
-  const sessionResponse = await acp.nextResponse(sessionId);
+  const sessionResponse = await acp.nextResponse(sessionRequestId);
   assert.equal(sessionResponse.error, undefined);
   assert.equal(typeof sessionResponse.result, "object");
   assert.notEqual(sessionResponse.result, null);
@@ -304,6 +309,27 @@ test("session/prompt streams message and thought updates before returning", asyn
     assert.equal(promptResponse.id, 3);
     assert.deepEqual(promptResponse.result, { stopReason: "end_turn" });
     assert.equal(acp.stderr, "");
+  });
+});
+
+test("session/new starts runtime in requested cwd", async () => {
+  await withAcpSubprocess("session-cwd", async (acp) => {
+    const sessionCwd = join(repoRoot, "src");
+    const sessionId = await initializeAndCreateSession(acp, 10, 11, sessionCwd);
+
+    acp.send({
+      jsonrpc: "2.0",
+      id: 12,
+      method: "session/prompt",
+      params: { sessionId, prompt: [{ type: "text", text: "cwd" }] },
+    });
+
+    const update = await acp.nextMessage();
+    const response = await acp.nextResponse(12);
+
+    assert.equal(update.method, "session/update");
+    assert.equal(textFromUpdate(update), sessionCwd);
+    assert.deepEqual(response.result, { stopReason: "end_turn" });
   });
 });
 

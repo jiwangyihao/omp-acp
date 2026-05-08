@@ -22,7 +22,7 @@ export interface StartAcpServerOptions {
 
 export function startAcpServer(options: StartAcpServerOptions): AgentSideConnection {
   const manager = new SessionManager({
-    runtimeFactory: options.runtimeFactory ?? (() => startOmpRpcClient()),
+    runtimeFactory: options.runtimeFactory ?? ((input) => startOmpRpcClient({ cwd: input.cwd })),
   });
   const connection = new AgentSideConnection((conn) => createOmpAcpAgent(conn, manager), options.stream);
   connection.closed.then(() => manager.closeAll()).catch(() => {});

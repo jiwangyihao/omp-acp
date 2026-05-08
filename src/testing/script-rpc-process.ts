@@ -73,6 +73,12 @@ function handleRequest(request: JsonObject): void {
       pendingCancelPrompt = { id, params: request.params };
       return;
     }
+
+    if (scenario === "session-cwd") {
+      writeFrame({ type: "message_update", content: process.cwd() });
+      writeFrame({ type: "response", id, result: { ok: true } });
+      return;
+    }
   }
 
   if (method === "cancel" && scenario === "session-cancel") {

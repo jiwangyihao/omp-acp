@@ -24,7 +24,7 @@ function createRuntimeFactoryFromEnv(env: NodeJS.ProcessEnv): RuntimeFactory | u
   }
 
   const args = parseRuntimeArgsEnv(env.OMP_ACP_RUNTIME_ARGS_JSON);
-  return () => startOmpRpcClient({ command, args });
+  return (input) => startOmpRpcClient({ command, args, cwd: input.cwd });
 }
 
 function parseRuntimeArgsEnv(value: string | undefined): string[] {
