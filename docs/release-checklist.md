@@ -37,6 +37,10 @@
 - [ ] 运行真实 `omp --mode rpc` controls smoke；如果本机不可用，记录版本、PATH 和失败原因。
 - [ ] 对照 `docs/compatibility/capability-matrix.md` 检查 `initialize` 输出。
 
+## GitHub Actions 发布流
+
+`.github/workflows/release.yml` 用于 npm Trusted Publisher 后续发布。GitHub 托管 runner 默认没有真实 `omp`，因此 workflow 跑 `check`、stdio smoke、SDK client smoke、registry-style probe 和 `openclaw/acpx` draft assessment；真实 OMP RPC controls smoke 仍作为本地发布前门禁执行并记录。
+
 ## Zed 手工门禁
 
 执行 `scripts/smoke-zed.md`，并记录：

@@ -1,0 +1,68 @@
+name: Release
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    name: Build, test, and publish
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Use latest npm for trusted publishing
+        run: npm install -g npm@latest
+
+      - name: Verify release tag matches package version
+        run: |
+          PACKAGE_VERSION=$(node -p "require('./package.json').version")
+          if [ "${GITHUB_REF_NAME}" != "v${PACKAGE_VERSION}" ]; then
+            echo "Release tag ${GITHUB_REF_NAME} does not match package version v${PACKAGE_VERSION}" >&2
+            exit 1
+          fi
+
+      - name: Run automated validation
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          npm run check
+          npm run smoke:acp
+          npm run smoke:sdk-client
+          npm run validate:registry
+          npm run validate:acpx
+
+      - name: Verify package contents
+        run: npm pack --dry-run --json
+
+      - name: Check whether version is already published
+        id: published
+        shell: bash
+        run: |
+          PACKAGE_NAME=$(node -p "require('./package.json').name")
+          PACKAGE_VERSION=$(node -p "require('./package.json').version")
+          if npm view "${PACKAGE_NAME}@${PACKAGE_VERSION}" version --json > /tmp/npm-version.json 2>/dev/null; then
+            echo "exists=true" >> "${GITHUB_OUTPUT}"
+            echo "${PACKAGE_NAME}@${PACKAGE_VERSION} already exists on npm; publish will be skipped."
+          else
+            echo "exists=false" >> "${GITHUB_OUTPUT}"
+            echo "${PACKAGE_NAME}@${PACKAGE_VERSION} is not published yet."
+          fi
+
+      - name: Publish to npm
+        if: steps.published.outputs.exists != 'true'
+        run: npm publish --access public
