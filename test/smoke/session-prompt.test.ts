@@ -4,11 +4,21 @@ import { once } from "node:events";
 import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import test from "node:test";
+import nodeTest from "node:test";
 
 const repoRoot = join(import.meta.dirname, "../..");
 const fixturePath = join(repoRoot, "src/testing/script-rpc-process.ts");
 const subprocessArgs = ["--import", "tsx", "src/index.ts"];
+
+let previousSmokeTest: Promise<unknown> = Promise.resolve();
+
+function serialSmokeTest(name: string, run: () => Promise<void>) {
+  nodeTest(name, async () => {
+    const current = previousSmokeTest.then(run);
+    previousSmokeTest = current.catch(() => undefined);
+    await current;
+  });
+}
 
 type JsonRpcObject = {
   jsonrpc: "2.0";
@@ -287,7 +297,7 @@ async function writeSmokeSession(agentDir: string, cwd: string, sessionId: strin
   return path;
 }
 
-test("session/list and session/load use OMP agent dir and keep stdout JSON-RPC only", async () => {
+serialSmokeTest("session/list and session/load use OMP agent dir and keep stdout JSON-RPC only", async () => {
   const agentDir = await mkdtemp(join(tmpdir(), "omp-acp-smoke-agent-"));
   const cwd = repoRoot;
   const sessionPath = await writeSmokeSession(agentDir, cwd, "smoke-session", [
@@ -326,7 +336,7 @@ test("session/list and session/load use OMP agent dir and keep stdout JSON-RPC o
   }, { OMP_ACP_AGENT_DIR: agentDir });
 });
 
-test("session/resume switches to an existing OMP session without replay and permits the next prompt", async () => {
+serialSmokeTest("session/resume switches to an existing OMP session without replay and permits the next prompt", async () => {
   const agentDir = await mkdtemp(join(tmpdir(), "omp-acp-smoke-resume-agent-"));
   const cwd = repoRoot;
   await writeSmokeSession(agentDir, cwd, "resume-smoke", [
@@ -353,7 +363,7 @@ test("session/resume switches to an existing OMP session without replay and perm
   }, { OMP_ACP_AGENT_DIR: agentDir });
 });
 
-test("session/prompt forwards image blocks to runtime without adding them to prompt text", async () => {
+serialSmokeTest("session/prompt forwards image blocks to runtime without adding them to prompt text", async () => {
   await withAcpSubprocess("session-images", async (acp) => {
     const sessionId = await initializeAndCreateSession(acp, 40, 41);
 
@@ -382,7 +392,7 @@ test("session/prompt forwards image blocks to runtime without adding them to pro
   });
 });
 
-test("runtime extension_ui_request fails session/prompt without assistant message notification", async () => {
+serialSmokeTest("runtime extension_ui_request fails session/prompt without assistant message notification", async () => {
   await withAcpSubprocess("extension-ui-request", async (acp) => {
     const sessionId = await initializeAndCreateSession(acp, 34, 35);
 
@@ -403,7 +413,7 @@ test("runtime extension_ui_request fails session/prompt without assistant messag
     );
   });
 });
-test("session/prompt streams message and thought updates before returning", async () => {
+serialSmokeTest("session/prompt streams message and thought updates before returning", async () => {
   await withAcpSubprocess("session-happy", async (acp) => {
     const sessionId = await initializeAndCreateSession(acp, 1, 2);
     const expectedPrompt = "hello\n\n[Resource: Design Spec] file:///repo/spec.md\nUse this as context.";
@@ -443,7 +453,7 @@ test("session/prompt streams message and thought updates before returning", asyn
   });
 });
 
-test("session/new starts runtime in requested cwd", async () => {
+serialSmokeTest("session/new starts runtime in requested cwd", async () => {
   await withAcpSubprocess("session-cwd", async (acp) => {
     const sessionCwd = join(repoRoot, "src");
     const sessionId = await initializeAndCreateSession(acp, 10, 11, sessionCwd);
@@ -464,7 +474,7 @@ test("session/new starts runtime in requested cwd", async () => {
   });
 });
 
-test("runtime extension_error fails session/prompt without assistant message notification", async () => {
+serialSmokeTest("runtime extension_error fails session/prompt without assistant message notification", async () => {
   await withAcpSubprocess("session-error", async (acp) => {
     const sessionId = await initializeAndCreateSession(acp, 4, 5);
 
@@ -487,7 +497,7 @@ test("runtime extension_error fails session/prompt without assistant message not
   });
 });
 
-test("session/cancel returns cancelled and suppresses late normal chunks", async () => {
+serialSmokeTest("session/cancel returns cancelled and suppresses late normal chunks", async () => {
   await withAcpSubprocess("session-cancel", async (acp) => {
     const sessionId = await initializeAndCreateSession(acp, 7, 8);
 
@@ -510,7 +520,7 @@ test("session/cancel returns cancelled and suppresses late normal chunks", async
   });
 });
 
-test("session/prompt forwards runtime tool execution updates before response", async () => {
+serialSmokeTest("session/prompt forwards runtime tool execution updates before response", async () => {
   await withAcpSubprocess("session-tool-events", async (acp) => {
     const sessionId = await initializeAndCreateSession(acp, 20, 21);
 
@@ -556,7 +566,7 @@ test("session/prompt forwards runtime tool execution updates before response", a
   });
 });
 
-test("session/prompt sends raw host tool result for unregistered runtime host tool", async () => {
+serialSmokeTest("session/prompt sends raw host tool result for unregistered runtime host tool", async () => {
   await withAcpSubprocess("session-host-tool-unregistered", async (acp) => {
     const sessionId = await initializeAndCreateSession(acp, 23, 24);
 
@@ -591,7 +601,7 @@ test("session/prompt sends raw host tool result for unregistered runtime host to
   });
 });
 
-test("invalid runtime args env fails on stderr without stdout", async () => {
+serialSmokeTest("invalid runtime args env fails on stderr without stdout", async () => {
   const child = spawn(process.execPath, subprocessArgs, {
     cwd: repoRoot,
     env: {
