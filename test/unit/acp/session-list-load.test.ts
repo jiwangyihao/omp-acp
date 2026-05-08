@@ -8,15 +8,32 @@ import { createOmpAcpAgent } from "../../../src/acp/server.ts";
 import type { RuntimeAdapter } from "../../../src/runtime/RuntimeAdapter.ts";
 import { SessionManager, type RuntimeFactoryInput } from "../../../src/session/manager.ts";
 
+const CONTROL_STATE = {
+  model: { provider: "p", id: "m1", name: "Model One" },
+  thinkingLevel: "low",
+  steeringMode: "all",
+  followUpMode: "one-at-a-time",
+  interruptMode: "immediate",
+  autoCompactionEnabled: true,
+};
+
+const AVAILABLE_MODELS = [{ provider: "p", id: "m1", name: "Model One", thinking: { minLevel: "minimal", maxLevel: "high" } }];
+
 class FakeRuntime implements RuntimeAdapter {
   readonly ready = Promise.resolve();
   readonly diagnostics = { stderr: "" };
   readonly requests: Array<{ method: string; params?: unknown }> = [];
   readonly sent: unknown[] = [];
   closed = false;
+  getStateFailure: unknown;
 
   async request(method: string, params?: unknown): Promise<unknown> {
     this.requests.push({ method, params });
+    if (method === "get_state") {
+      if (this.getStateFailure !== undefined) throw this.getStateFailure;
+      return structuredClone(CONTROL_STATE);
+    }
+    if (method === "get_available_models") return structuredClone(AVAILABLE_MODELS);
     return { ok: true };
   }
 
@@ -35,7 +52,7 @@ class FakeRuntime implements RuntimeAdapter {
 
 type TestAgent = Agent & Required<Pick<Agent, "loadSession" | "listSessions">>;
 
-async function makeAgent() {
+async function makeAgent(options: { getStateFailure?: unknown } = {}) {
   const agentDir = await mkdtemp(join(tmpdir(), "omp-acp-agent-"));
   const runtimes: FakeRuntime[] = [];
   const inputs: RuntimeFactoryInput[] = [];
@@ -43,6 +60,7 @@ async function makeAgent() {
     runtimeFactory: (input) => {
       inputs.push(input);
       const runtime = new FakeRuntime();
+      runtime.getStateFailure = options.getStateFailure;
       runtimes.push(runtime);
       return runtime;
     },
@@ -54,7 +72,7 @@ async function makeAgent() {
     },
   };
   const agent = createOmpAcpAgent(connection as never, manager, {}, { agentDir }) as TestAgent;
-  return { agent, agentDir, runtimes, inputs, updates };
+  return { agent, agentDir, manager, runtimes, inputs, updates };
 }
 
 async function writeSession(agentDir: string, cwd: string, sessionId: string, lines: unknown[]) {
@@ -103,10 +121,16 @@ test("loadSession switches runtime to OMP session path, replays text history, an
 
   const response = await agent.loadSession({ sessionId: "load-me", cwd, mcpServers: [] } as LoadSessionRequest);
 
-  assert.deepEqual(response, {});
+  assert.ok(response.models);
+  assert.ok(response.modes);
+  assert.ok(response.configOptions?.some((option: { id: string }) => option.id === "model"));
   assert.equal(inputs.length, 1);
   assert.deepEqual(inputs[0], { sessionId: "load-me", cwd, mcpServers: [] });
-  assert.deepEqual(runtimes[0]?.requests, [{ method: "switch_session", params: { sessionPath } }]);
+  assert.deepEqual(runtimes[0]?.requests, [
+    { method: "switch_session", params: { sessionPath } },
+    { method: "get_state", params: undefined },
+    { method: "get_available_models", params: undefined },
+  ]);
   assert.deepEqual(updates, [
     { sessionId: "load-me", update: { sessionUpdate: "user_message_chunk", content: { type: "text", text: "question" } } },
     { sessionId: "load-me", update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "answer" } } },
@@ -134,4 +158,18 @@ test("loadSession fails clearly for unknown sessions and unsupported history", a
     agent.loadSession({ sessionId: "bad-history", cwd, mcpServers: [] } as LoadSessionRequest),
     /Unsupported OMP message role/,
   );
+});
+
+test("loadSession does not publish when setup state build fails", async () => {
+  const { agent, agentDir, manager } = await makeAgent({ getStateFailure: new Error("state failed") });
+  const cwd = join(tmpdir(), "load-state-fails");
+  await writeSession(agentDir, cwd, "load-state-fails", [
+    { type: "session", id: "load-state-fails", cwd, timestamp: "2026-05-08T01:00:00.000Z" },
+  ]);
+
+  await assert.rejects(
+    agent.loadSession({ sessionId: "load-state-fails", cwd, mcpServers: [] } as LoadSessionRequest),
+    /Runtime failed to become ready/,
+  );
+  assert.equal(manager.tryGetSession("load-state-fails"), undefined);
 });

@@ -9,11 +9,23 @@ import type { RuntimeAdapter, RuntimeDiagnostics } from "../../../src/runtime/Ru
 import { findOmpSessionById, OmpSessionForkSourceError } from "../../../src/runtime/omp/sessions.ts";
 import { SessionManager, SessionManagerError, type RuntimeFactoryInput } from "../../../src/session/manager.ts";
 
+const CONTROL_STATE = {
+  model: { provider: "p", id: "m1", name: "Model One" },
+  thinkingLevel: "low",
+  steeringMode: "all",
+  followUpMode: "one-at-a-time",
+  interruptMode: "immediate",
+  autoCompactionEnabled: true,
+};
+
+const AVAILABLE_MODELS = [{ provider: "p", id: "m1", name: "Model One", thinking: { minLevel: "minimal", maxLevel: "high" } }];
+
 class FakeRuntimeAdapter implements RuntimeAdapter {
   readonly diagnostics: RuntimeDiagnostics = { stderr: "" };
   readonly ready = Promise.resolve();
   readonly requests: Array<{ method: string; params?: unknown }> = [];
   switchSessionFailure: unknown;
+  getStateFailure: unknown;
   onSwitchSession: (() => void) | undefined;
   closeCalls = 0;
 
@@ -24,6 +36,13 @@ class FakeRuntimeAdapter implements RuntimeAdapter {
     }
     if (method === "switch_session" && this.switchSessionFailure !== undefined) {
       throw this.switchSessionFailure;
+    }
+    if (method === "get_state") {
+      if (this.getStateFailure !== undefined) throw this.getStateFailure;
+      return structuredClone(CONTROL_STATE);
+    }
+    if (method === "get_available_models") {
+      return structuredClone(AVAILABLE_MODELS);
     }
     return undefined;
   }
@@ -39,7 +58,7 @@ class FakeRuntimeAdapter implements RuntimeAdapter {
   }
 }
 
-function createHarness(options: { switchSessionFailure?: unknown; onSwitchSession?: () => void } = {}) {
+function createHarness(options: { switchSessionFailure?: unknown; getStateFailure?: unknown; onSwitchSession?: () => void } = {}) {
   const runtimes: FakeRuntimeAdapter[] = [];
   const inputs: RuntimeFactoryInput[] = [];
   const ids = ["fork-session"];
@@ -49,6 +68,7 @@ function createHarness(options: { switchSessionFailure?: unknown; onSwitchSessio
       inputs.push(input);
       const runtime = new FakeRuntimeAdapter();
       runtime.switchSessionFailure = options.switchSessionFailure;
+      runtime.getStateFailure = options.getStateFailure;
       runtimes.push(runtime);
       runtime.onSwitchSession = options.onSwitchSession;
       return runtime;
@@ -103,12 +123,19 @@ test("forkSession creates an OMP fork file, switches runtime before publishing, 
 
   const response = await handleSessionFork(forkRequest(cwd), manager, { agentDir });
 
-  assert.deepEqual(response, { sessionId: "fork-session" });
+  assert.equal(response.sessionId, "fork-session");
+  assert.ok(response.models);
+  assert.ok(response.modes);
+  assert.ok(response.configOptions?.some((option) => option.id === "model"));
   assert.equal(inputs.length, 1);
   assert.deepEqual(inputs[0], { sessionId: "fork-session", cwd, mcpServers: [] });
   assert.equal(runtimes.length, 1);
+  assert.deepEqual(runtimes[0]?.requests.slice(0, 3), [
+    { method: "switch_session", params: { sessionPath: (runtimes[0]?.requests[0]?.params as { sessionPath: string }).sessionPath } },
+    { method: "get_state", params: undefined },
+    { method: "get_available_models", params: undefined },
+  ]);
   const switchRequest = runtimes[0]?.requests[0];
-  assert.equal(switchRequest?.method, "switch_session");
   assert.notEqual((switchRequest?.params as { sessionPath?: string }).sessionPath, sourcePath);
   const forkPath = (switchRequest?.params as { sessionPath: string }).sessionPath;
   const forkHeader = JSON.parse((await readFile(forkPath, "utf8")).split(/\r?\n/)[0]!);
@@ -184,6 +211,17 @@ test("forkSession does not publish a fork and removes fork file when switch_sess
   assert.equal(await findOmpSessionById("fork-session", { agentDir }), undefined);
 });
 
+test("forkSession does not publish a fork and removes fork file when setup state build fails", async () => {
+  const agentDir = await tempAgentDir();
+  const cwd = join(tmpdir(), "fork-state-failure");
+  await writeSession(agentDir, cwd, "source-session", [{ type: "session", id: "source-session", cwd }]);
+  const { manager } = createHarness({ getStateFailure: new Error("state failed") });
+
+  await assert.rejects(handleSessionFork(forkRequest(cwd), manager, { agentDir }), /Runtime failed to become ready/);
+  assert.throws(() => manager.requireSession("fork-session"), /Unknown session/);
+  assert.equal(await findOmpSessionById("fork-session", { agentDir }), undefined);
+});
+
 test("forkSession preserves fork failure details when cleanup fails", async () => {
   const agentDir = await tempAgentDir();
   const cwd = join(tmpdir(), "fork-cleanup-failure");
@@ -206,6 +244,34 @@ test("forkSession preserves fork failure details when cleanup fails", async () =
         ["Runtime failed to become ready for session fork-session", "cleanup failed"],
       );
       assert.match(((aggregate.errors[0] as Error).cause as Error).message, /switch failed/);
+      return true;
+    },
+  );
+  assert.throws(() => manager.requireSession("fork-session"), /Unknown session/);
+});
+
+test("forkSession preserves setup state failure details when cleanup also fails", async () => {
+  const agentDir = await tempAgentDir();
+  const cwd = join(tmpdir(), "fork-state-cleanup-failure");
+  await writeSession(agentDir, cwd, "source-session", [{ type: "session", id: "source-session", cwd }]);
+  const { manager } = createHarness({ getStateFailure: new Error("state failed") });
+
+  await assert.rejects(
+    handleSessionFork(forkRequest(cwd), manager, {
+      agentDir,
+      removeForkFile: async () => {
+        throw new Error("cleanup failed");
+      },
+    }),
+    (error) => {
+      assert.equal(error instanceof AggregateError, true);
+      const aggregate = error as AggregateError;
+      assert.match(aggregate.message, /Fork session failed and cleanup failed for/);
+      assert.deepEqual(
+        aggregate.errors.map((nestedError) => (nestedError as Error).message),
+        ["Runtime failed to become ready for session fork-session", "cleanup failed"],
+      );
+      assert.match(((aggregate.errors[0] as Error).cause as Error).message, /state failed/);
       return true;
     },
   );

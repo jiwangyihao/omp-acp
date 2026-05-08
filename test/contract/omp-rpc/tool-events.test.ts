@@ -48,7 +48,8 @@ test("raw send writes JSONL frame without creating a pending request", async () 
       type: "raw_frame_observed",
       frame: { type: "host_tool_result", id: "host_1", result: { ok: true } },
     });
-    assert.equal(await client.request("get_state"), undefined);
+    const state = await client.request("get_state");
+    assert.equal((state as { model?: { provider?: string } }).model?.provider, "fixture");
   });
 });
 

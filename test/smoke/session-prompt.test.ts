@@ -281,7 +281,18 @@ async function initializeAndCreateSession(
   assert.equal(sessionResponse.error, undefined);
   assert.equal(typeof sessionResponse.result, "object");
   assert.notEqual(sessionResponse.result, null);
+  assertSessionSetupState(sessionResponse.result);
   return (sessionResponse.result as { sessionId: string }).sessionId;
+}
+
+function assertSessionSetupState(result: unknown): void {
+  assert.equal(typeof result, "object");
+  assert.notEqual(result, null);
+  const setup = result as { models?: unknown; modes?: unknown; configOptions?: unknown };
+  assert.equal(typeof setup.models, "object");
+  assert.equal(typeof setup.modes, "object");
+  assert.ok(Array.isArray(setup.configOptions));
+  assert.ok(setup.configOptions.some((option: { id?: string }) => option.id === "model"));
 }
 
 function textFromUpdate(message: JsonRpcObject): string | undefined {
@@ -347,7 +358,7 @@ serialSmokeTest("session/list and session/load use OMP agent dir and keep stdout
     const userUpdate = await acp.nextMessage();
     const assistantUpdate = await acp.nextMessage();
     const loadResponse = await acp.nextResponse(32);
-    assert.deepEqual(loadResponse.result, {});
+    assertSessionSetupState(loadResponse.result);
     assert.equal(updateKind(userUpdate), "user_message_chunk");
     assert.equal(textFromUpdate(userUpdate), "past question");
     assert.equal(updateKind(assistantUpdate), "agent_message_chunk");
@@ -409,7 +420,7 @@ serialSmokeTest("session/resume switches to an existing OMP session without repl
 
     acp.send({ jsonrpc: "2.0", id: 38, method: "session/resume", params: { sessionId: "resume-smoke", cwd, mcpServers: [] } });
     const resumeResponse = await acp.nextResponse(38);
-    assert.deepEqual(resumeResponse.result, {});
+    assertSessionSetupState(resumeResponse.result);
     assert.equal(acp.messages.some((message) => message.method === "session/update"), false);
 
     acp.send({ jsonrpc: "2.0", id: 39, method: "session/prompt", params: { sessionId: "resume-smoke", prompt: [{ type: "text", text: "after resume" }] } });

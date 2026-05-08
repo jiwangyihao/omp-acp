@@ -1,5 +1,6 @@
 import { rm } from "node:fs/promises";
 import { RequestError, type ForkSessionRequest, type ForkSessionResponse } from "@agentclientprotocol/sdk";
+import { buildSessionSetupState, type SessionSetupState } from "../session-controls.ts";
 import {
   findOmpSessionById,
   forkOmpSessionFile,
@@ -55,6 +56,7 @@ export async function handleSessionFork(
     const forkSessionFile = options.forkSessionFile ?? forkOmpSessionFile;
     const removeForkFile = options.removeForkFile ?? rm;
     let fork: Awaited<ReturnType<typeof forkOmpSessionFile>> | undefined;
+    let setupState: SessionSetupState | undefined;
 
     try {
       try {
@@ -74,6 +76,7 @@ export async function handleSessionFork(
 
       await manager.createSessionWithId(forkId, params, async (runtime) => {
         await runtime.request("switch_session", { sessionPath: fork!.path });
+        setupState = await buildSessionSetupState(runtime);
       });
     } catch (error) {
       if (fork !== undefined) {
@@ -86,8 +89,15 @@ export async function handleSessionFork(
       throw RequestError.internalError({ details: "Fork session file was not created" });
     }
 
-    return { sessionId: fork.sessionId };
+    return { sessionId: fork.sessionId, ...requireSetupState(setupState) };
   } finally {
     sourceGuard.finish();
   }
+}
+
+function requireSetupState(setupState: SessionSetupState | undefined): SessionSetupState {
+  if (setupState === undefined) {
+    throw new Error("Session setup state was not built before publish");
+  }
+  return setupState;
 }

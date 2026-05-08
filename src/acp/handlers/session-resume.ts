@@ -1,4 +1,5 @@
 import type { ResumeSessionRequest, ResumeSessionResponse } from "@agentclientprotocol/sdk";
+import { buildSessionSetupState, type SessionSetupState } from "../session-controls.ts";
 import { findOmpSessionById } from "../../runtime/omp/sessions.ts";
 import type { SessionManager } from "../../session/manager.ts";
 
@@ -19,9 +20,18 @@ export async function handleSessionResume(
     throw new Error(`Unknown OMP session: ${params.sessionId}`);
   }
 
+  let setupState: SessionSetupState | undefined;
   await manager.createSessionWithId(params.sessionId, params, async (runtime) => {
     await runtime.request("switch_session", { sessionPath: session.path });
+    setupState = await buildSessionSetupState(runtime);
   });
 
-  return {};
+  return requireSetupState(setupState);
+}
+
+function requireSetupState(setupState: SessionSetupState | undefined): SessionSetupState {
+  if (setupState === undefined) {
+    throw new Error("Session setup state was not built before publish");
+  }
+  return setupState;
 }

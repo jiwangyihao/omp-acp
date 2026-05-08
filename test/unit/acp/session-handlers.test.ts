@@ -22,6 +22,17 @@ class Deferred<T> {
   }
 }
 
+const CONTROL_STATE = {
+  model: { provider: "p", id: "m1", name: "Model One" },
+  thinkingLevel: "low",
+  steeringMode: "all",
+  followUpMode: "one-at-a-time",
+  interruptMode: "immediate",
+  autoCompactionEnabled: true,
+};
+
+const AVAILABLE_MODELS = [{ provider: "p", id: "m1", name: "Model One", thinking: { minLevel: "minimal", maxLevel: "high" } }];
+
 class FakeRuntimeAdapter implements RuntimeAdapter {
   readonly diagnostics: RuntimeDiagnostics = { stderr: "" };
   readonly ready = Promise.resolve();
@@ -34,6 +45,12 @@ class FakeRuntimeAdapter implements RuntimeAdapter {
 
   request(method: string, params?: unknown): Promise<unknown> {
     this.requests.push({ method, params });
+    if (method === "get_state") {
+      return Promise.resolve(structuredClone(CONTROL_STATE));
+    }
+    if (method === "get_available_models") {
+      return Promise.resolve(structuredClone(AVAILABLE_MODELS));
+    }
     if (method === "prompt") {
       const deferred = new Deferred<unknown>();
       this.promptDeferreds.push(deferred);
@@ -142,7 +159,10 @@ test("session/new returns the created session id", async () => {
 
   const response = await handleSessionNew(newSessionRequest({ cwd: "/tmp/project" }), manager);
 
-  assert.deepEqual(response, { sessionId: "session-1" });
+  assert.equal(response.sessionId, "session-1");
+  assert.ok(response.models);
+  assert.ok(response.modes);
+  assert.ok(response.configOptions?.some((option) => option.id === "model"));
   assert.equal(runtimes.length, 1);
   assert.deepEqual(inputs, [{ cwd: "/tmp/project", mcpServers: [], sessionId: "session-1" }]);
 });
@@ -151,7 +171,7 @@ test("text prompt sends agent_message_chunk before returning end_turn", async ()
   const { manager, connection, runtime } = await createSession();
 
   const promptPromise = handleSessionPrompt(promptRequest(), { manager, connection });
-  assert.deepEqual(runtime.requests[0], { method: "prompt", params: { message: "hello" } });
+  assert.deepEqual(runtime.requests.at(-1), { method: "prompt", params: { message: "hello" } });
 
   runtime.emit({ type: "event", eventType: "message_update", raw: { content: "assistant text" } });
   assert.deepEqual(connection.updates, [
@@ -208,7 +228,7 @@ test("cancel while prompt pending returns cancelled, requests runtime abort, sup
   await handleSessionCancel({ sessionId: "session-1" }, manager);
 
   assert.deepEqual(await promptPromise, { stopReason: "cancelled" });
-  assert.deepEqual(runtime.requests[1], { method: "abort", params: undefined });
+  assert.deepEqual(runtime.requests.at(-1), { method: "abort", params: undefined });
 
   runtime.emit({ type: "event", eventType: "message_update", raw: { content: "too late" } });
   runtime.promptDeferreds[0]!.resolve({});

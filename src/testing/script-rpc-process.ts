@@ -6,6 +6,17 @@ let handledRequests = 0;
 let pendingCancelPrompt: { id: unknown; params: unknown } | undefined;
 let pendingHostToolPrompt: { id: unknown; params: unknown } | undefined;
 
+const CONTROL_STATE = {
+  model: { provider: "fixture", id: "model", name: "Fixture Model" },
+  thinkingLevel: "low",
+  steeringMode: "all",
+  followUpMode: "one-at-a-time",
+  interruptMode: "immediate",
+  autoCompactionEnabled: true,
+};
+
+const AVAILABLE_MODELS = [{ provider: "fixture", id: "model", name: "Fixture Model", thinking: { minLevel: "minimal", maxLevel: "high" } }];
+
 function writeFrame(frame: JsonObject): void {
   process.stdout.write(`${JSON.stringify(frame)}\n`);
 }
@@ -61,12 +72,12 @@ function handleRequest(request: JsonObject): void {
     if (scenario === "event-before-response") {
       writeFrame({ type: "message_update", content: "hello" });
     }
-    writeSuccess(id, command);
+    writeSuccess(id, command, CONTROL_STATE);
     return;
   }
 
   if (command === "get_available_models") {
-    writeSuccess(id, command, []);
+    writeSuccess(id, command, AVAILABLE_MODELS);
     return;
   }
 

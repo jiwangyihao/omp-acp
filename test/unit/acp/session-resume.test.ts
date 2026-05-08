@@ -8,14 +8,31 @@ import { createOmpAcpAgent } from "../../../src/acp/server.ts";
 import type { RuntimeAdapter } from "../../../src/runtime/RuntimeAdapter.ts";
 import { SessionManager, type RuntimeFactoryInput } from "../../../src/session/manager.ts";
 
+const CONTROL_STATE = {
+  model: { provider: "p", id: "m1", name: "Model One" },
+  thinkingLevel: "low",
+  steeringMode: "all",
+  followUpMode: "one-at-a-time",
+  interruptMode: "immediate",
+  autoCompactionEnabled: true,
+};
+
+const AVAILABLE_MODELS = [{ provider: "p", id: "m1", name: "Model One", thinking: { minLevel: "minimal", maxLevel: "high" } }];
+
 class FakeRuntime implements RuntimeAdapter {
   readonly ready = Promise.resolve();
   readonly diagnostics = { stderr: "" };
   readonly requests: Array<{ method: string; params?: unknown }> = [];
   closed = false;
+  getStateFailure: unknown;
 
   async request(method: string, params?: unknown): Promise<unknown> {
     this.requests.push({ method, params });
+    if (method === "get_state") {
+      if (this.getStateFailure !== undefined) throw this.getStateFailure;
+      return structuredClone(CONTROL_STATE);
+    }
+    if (method === "get_available_models") return structuredClone(AVAILABLE_MODELS);
     return { ok: true };
   }
 
@@ -32,7 +49,7 @@ class FakeRuntime implements RuntimeAdapter {
 
 type TestAgent = Agent & Required<Pick<Agent, "resumeSession">>;
 
-async function makeAgent() {
+async function makeAgent(options: { getStateFailure?: unknown } = {}) {
   const agentDir = await mkdtemp(join(tmpdir(), "omp-acp-resume-agent-"));
   const runtimes: FakeRuntime[] = [];
   const inputs: RuntimeFactoryInput[] = [];
@@ -40,6 +57,7 @@ async function makeAgent() {
     runtimeFactory: (input) => {
       inputs.push(input);
       const runtime = new FakeRuntime();
+      runtime.getStateFailure = options.getStateFailure;
       runtimes.push(runtime);
       return runtime;
     },
@@ -51,7 +69,7 @@ async function makeAgent() {
     },
   };
   const agent = createOmpAcpAgent(connection as never, manager, {}, { agentDir }) as TestAgent;
-  return { agent, agentDir, runtimes, inputs, updates };
+  return { agent, agentDir, manager, runtimes, inputs, updates };
 }
 
 async function writeSession(agentDir: string, cwd: string, sessionId: string, lines: unknown[]) {
@@ -73,10 +91,16 @@ test("resumeSession switches runtime to OMP session path, publishes same session
 
   const response = await agent.resumeSession({ sessionId: "resume-me", cwd, mcpServers: [] } as ResumeSessionRequest);
 
-  assert.deepEqual(response, {});
+  assert.ok(response.models);
+  assert.ok(response.modes);
+  assert.ok(response.configOptions?.some((option: { id: string }) => option.id === "model"));
   assert.equal(inputs.length, 1);
   assert.deepEqual(inputs[0], { sessionId: "resume-me", cwd, mcpServers: [] });
-  assert.deepEqual(runtimes[0]?.requests, [{ method: "switch_session", params: { sessionPath } }]);
+  assert.deepEqual(runtimes[0]?.requests, [
+    { method: "switch_session", params: { sessionPath } },
+    { method: "get_state", params: undefined },
+    { method: "get_available_models", params: undefined },
+  ]);
   assert.deepEqual(updates, []);
 
   await agent.prompt({ sessionId: "resume-me", prompt: [{ type: "text", text: "after resume" }] });
@@ -94,4 +118,18 @@ test("resumeSession fails clearly for unknown sessions", async () => {
     agent.resumeSession({ sessionId: "missing", cwd, mcpServers: [] } as ResumeSessionRequest),
     /Unknown OMP session: missing/,
   );
+});
+
+test("resumeSession does not publish when setup state build fails", async () => {
+  const { agent, agentDir, manager } = await makeAgent({ getStateFailure: new Error("state failed") });
+  const cwd = join(tmpdir(), "resume-state-fails");
+  await writeSession(agentDir, cwd, "resume-state-fails", [
+    { type: "session", id: "resume-state-fails", cwd, timestamp: "2026-05-08T01:00:00.000Z" },
+  ]);
+
+  await assert.rejects(
+    agent.resumeSession({ sessionId: "resume-state-fails", cwd, mcpServers: [] } as ResumeSessionRequest),
+    /Runtime failed to become ready/,
+  );
+  assert.equal(manager.tryGetSession("resume-state-fails"), undefined);
 });

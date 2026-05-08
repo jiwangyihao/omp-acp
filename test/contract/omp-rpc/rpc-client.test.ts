@@ -173,7 +173,7 @@ test("successful real responses resolve data or undefined", async () => {
     await client.ready;
 
     assert.deepEqual(await client.request("switch_session", { sessionPath: "sessions/two" }), { ok: true, sessionPath: "sessions/two" });
-    assert.equal(await client.request("get_state"), undefined);
+    assertControlState(await client.request("get_state"));
   });
 });
 
@@ -204,7 +204,7 @@ test("events can interleave before response", async () => {
 
     const result = await response;
 
-    assert.equal(result, undefined);
+    assertControlState(result);
     assert.deepEqual(order, ["event:message_update", "response"]);
   });
 });
@@ -236,12 +236,20 @@ test("stderr is captured in diagnostics", async () => {
     await client.ready;
     await waitForDiagnostic(client, "fixture warning");
 
+
     const result = await client.request("get_state");
 
-    assert.equal(result, undefined);
+    assertControlState(result);
     assert.match(client.diagnostics.stderr, /fixture warning/);
   });
 });
+
+function assertControlState(result: unknown): void {
+  assert.equal(typeof result, "object");
+  assert.notEqual(result, null);
+  assert.equal((result as { model?: { provider?: string } }).model?.provider, "fixture");
+  assert.equal((result as { autoCompactionEnabled?: boolean }).autoCompactionEnabled, true);
+}
 
 function omitId(frame: Record<string, unknown>): Record<string, unknown> {
   const { id: _id, ...withoutId } = frame;
