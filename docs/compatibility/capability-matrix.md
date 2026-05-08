@@ -27,9 +27,10 @@
 | `session/resume` | 未实现 | 不声明 | lifecycle contract test |
 | `agent_message_chunk` | 已实现 | runtime `message_update` 文本输出映射为 ACP message chunk | `test/unit/translate/events-message.test.ts` + `test/smoke/session-prompt.test.ts` |
 | `agent_thought_chunk` | 已实现 | runtime thought/reasoning 标记映射为 ACP thought chunk | `test/unit/translate/events-message.test.ts` + `test/smoke/session-prompt.test.ts` |
-| `tool_call` | 未实现 | 不声明 | tool event contract test |
-| `tool_call_update` | 未实现 | 不声明 | tool event contract test |
-| Structured edit diff | 未实现 | 不声明 | diff unit test + smoke edit |
+| `tool_call` | 已实现 | runtime tool start events 与 host-tool bridge pending 状态会作为 ACP `session/update` 发出；无额外 initialize flag | `test/unit/translate/tools.test.ts` + `test/unit/acp/session-handlers.test.ts` + `test/smoke/session-prompt.test.ts` |
+| `tool_call_update` | 已实现 | runtime tool update/end、tool failure/cancel、host-tool result/failure 会作为 ACP `session/update` 发出；无额外 initialize flag | `test/unit/translate/tools.test.ts` + `test/unit/runtime/omp/host-tools.test.ts` + `test/smoke/session-prompt.test.ts` |
+| Structured edit diff | 已实现 | adapter 支持已测试的 OMP/fixture diff shape；未知 diff shape 作为 failed tool update，不伪造文本成功 | `test/unit/translate/diffs.test.ts` + `test/smoke/session-prompt.test.ts` |
+| OMP host tool bridge | 已实现 | 仅 adapter registry 中显式注册的 host tool 会执行；未注册 host tool 回写 raw `host_tool_result` error；不声明 MCP/terminal/filesystem delegation | `test/unit/runtime/omp/host-tools.test.ts` + `test/contract/omp-rpc/tool-events.test.ts` + `test/smoke/session-prompt.test.ts` |
 | Image prompt | 待验证 | 不声明 | OMP prompt contract test |
 | Embedded context | 待验证 | 不声明 | ACP content block conversion test |
 | MCP HTTP | 未实现 | 不声明 | real MCP integration test |

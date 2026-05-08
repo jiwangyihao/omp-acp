@@ -336,11 +336,17 @@ node scripts/smoke-acp.mjs
 - 新增：`src/translate/diffs.ts`
 - 新增：`src/runtime/omp/host-tools.ts`
 - 修改：`src/translate/events.ts`
-- 修改：`src/acp/capabilities.ts`
+- 修改：`src/runtime/RuntimeAdapter.ts`
+- 修改：`src/runtime/omp/rpc-client.ts`
+- 修改：`src/acp/handlers/session-prompt.ts`
+- 修改：`src/acp/server.ts`
+- 扩展：`src/testing/script-rpc-process.ts`
 - 新增：`test/unit/translate/tools.test.ts`
 - 新增：`test/unit/translate/diffs.test.ts`
+- 新增：`test/unit/runtime/omp/host-tools.test.ts`
 - 新增：`test/contract/omp-rpc/tool-events.test.ts`
-
+- 扩展：`test/unit/acp/session-handlers.test.ts`
+- 扩展：`test/smoke/session-prompt.test.ts`
 **核心行为：**
 
 - OMP tool start/update/end 映射为 ACP `tool_call` / `tool_call_update`；
@@ -351,10 +357,10 @@ node scripts/smoke-acp.mjs
 
 **验收标准：**
 
-- [ ] 成功 tool、失败 tool、取消 tool 都有测试；
-- [ ] edit diff 覆盖 create、modify、delete、rename 或明确记录不支持项；
-- [ ] 文件路径在 Windows 与 POSIX 风格下都不损坏；
-- [ ] tool failure 会成为可见失败状态，不是普通文本 chunk。
+- [x] 成功 tool、失败 tool、取消 tool 都有测试；
+- [x] edit diff 覆盖 create、modify、delete、rename 或明确记录不支持项；
+- [x] 文件路径在 Windows 与 POSIX 风格下都不损坏；
+- [x] tool failure 会成为可见失败状态，不是普通文本 chunk。
 
 ### 阶段 5：OMP session、config、commands 与 extension 集成
 
