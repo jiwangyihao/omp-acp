@@ -75,10 +75,10 @@ function translateImageBlock(block: Extract<ContentBlock, { type: "image" }>): O
 
 function formatEmbeddedResource(block: Extract<ContentBlock, { type: "resource" }>): string {
   const resource = block.resource;
-  if (isRecord(resource) && typeof resource.uri === "string" && typeof resource.text === "string") {
+  if (isEmbeddedTextResource(resource)) {
     return formatEmbeddedResourceSection("Embedded Resource", resource.uri, resource.text, resource.mimeType);
   }
-  if (isRecord(resource) && typeof resource.uri === "string" && typeof resource.blob === "string") {
+  if (isEmbeddedBlobResource(resource)) {
     return formatEmbeddedResourceSection("Embedded Blob Resource", resource.uri, resource.blob, resource.mimeType);
   }
 
@@ -109,4 +109,12 @@ function rejectUnknownBlock(block: unknown): never {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isEmbeddedTextResource(value: unknown): value is { uri: string; text: string; mimeType?: string | null } {
+  return isRecord(value) && typeof value.uri === "string" && typeof value.text === "string";
+}
+
+function isEmbeddedBlobResource(value: unknown): value is { uri: string; blob: string; mimeType?: string | null } {
+  return isRecord(value) && typeof value.uri === "string" && typeof value.blob === "string";
 }
