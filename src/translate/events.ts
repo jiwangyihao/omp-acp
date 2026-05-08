@@ -1,6 +1,7 @@
 import type { SessionUpdate } from "@agentclientprotocol/sdk";
 import type { RuntimeEvent } from "../runtime/RuntimeEvents.ts";
 import { RuntimeEventTranslationError, UnsupportedRuntimeEventError } from "./errors.ts";
+import { toolExecutionEndToUpdate, toolExecutionStartToUpdate, toolExecutionUpdateToUpdate } from "./tools.ts";
 
 export { RuntimeEventTranslationError, UnsupportedRuntimeEventError } from "./errors.ts";
 
@@ -14,7 +15,13 @@ export function translateRuntimeEventToSessionUpdate(event: RuntimeEvent): Sessi
       throw new RuntimeEventTranslationError(formatExtensionError(event.raw));
     case "host_tool_call":
     case "host_tool_cancel":
-      throw new UnsupportedRuntimeEventError(event.eventType);
+      return undefined;
+    case "tool_execution_start":
+      return toolExecutionStartToUpdate(event.raw);
+    case "tool_execution_update":
+      return toolExecutionUpdateToUpdate(event.raw);
+    case "tool_execution_end":
+      return toolExecutionEndToUpdate(event.raw);
     default:
       return undefined;
   }

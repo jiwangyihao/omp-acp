@@ -1,11 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { RuntimeEvent } from "../../../src/runtime/RuntimeEvents.ts";
-import {
-  RuntimeEventTranslationError,
-  translateRuntimeEventToSessionUpdate,
-  UnsupportedRuntimeEventError,
-} from "../../../src/translate/events.ts";
+import { RuntimeEventTranslationError, translateRuntimeEventToSessionUpdate } from "../../../src/translate/events.ts";
 
 function event(eventType: string, raw: Record<string, unknown> = {}): RuntimeEvent {
   return { type: "event", eventType, raw };
@@ -77,13 +73,52 @@ test("translateRuntimeEventToSessionUpdate fails extension_error events", () => 
   );
 });
 
-test("translateRuntimeEventToSessionUpdate fails known unsupported host tool action events", () => {
-  assert.throws(
-    () => translateRuntimeEventToSessionUpdate(event("host_tool_call", { id: "tool-1" })),
-    UnsupportedRuntimeEventError,
+test("translateRuntimeEventToSessionUpdate leaves host tool events for the session bridge", () => {
+  assert.equal(translateRuntimeEventToSessionUpdate(event("host_tool_call", { id: "host-1", toolName: "x" })), undefined);
+  assert.equal(translateRuntimeEventToSessionUpdate(event("host_tool_cancel", { targetId: "host-1" })), undefined);
+});
+
+test("translateRuntimeEventToSessionUpdate maps tool execution events to ACP tool updates", () => {
+  assert.deepEqual(
+    translateRuntimeEventToSessionUpdate(
+      event("tool_execution_start", {
+        toolCallId: "call-1",
+        title: "Reading /repo/file.ts",
+        kind: "read_file",
+        input: { path: "/repo/file.ts" },
+        path: "/repo/file.ts",
+        line: 3,
+      }),
+    ),
+    {
+      sessionUpdate: "tool_call",
+      toolCallId: "call-1",
+      title: "Reading /repo/file.ts",
+      kind: "read",
+      status: "pending",
+      rawInput: { path: "/repo/file.ts" },
+      locations: [{ path: "/repo/file.ts", line: 3 }],
+    },
   );
-  assert.throws(
-    () => translateRuntimeEventToSessionUpdate(event("host_tool_cancel", { id: "tool-1" })),
-    UnsupportedRuntimeEventError,
+
+  assert.deepEqual(
+    translateRuntimeEventToSessionUpdate(
+      event("tool_execution_end", {
+        toolCallId: "call-1",
+        status: "completed",
+        content: "ok",
+        diff: { path: "/repo/file.ts", oldText: "old", newText: "new" },
+      }),
+    ),
+    {
+      sessionUpdate: "tool_call_update",
+      toolCallId: "call-1",
+      status: "completed",
+      rawOutput: "ok",
+      content: [
+        { type: "content", content: { type: "text", text: "ok" } },
+        { type: "diff", path: "/repo/file.ts", oldText: "old", newText: "new" },
+      ],
+    },
   );
 });
