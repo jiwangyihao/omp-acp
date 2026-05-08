@@ -123,6 +123,20 @@ test("closeAll closes pending runtime and prevents later session publish", async
   assert.throws(() => manager.requireSession("session-1"), SessionManagerError);
 });
 
+test("createSessionWithId rejects duplicate pending session ids", async () => {
+  const { manager, runtimes } = createManager();
+
+  const firstCreate = manager.createSessionWithId("fixed-session", newSessionRequest());
+  assert.equal(runtimes.length, 1);
+
+  const secondCreate = manager.createSessionWithId("fixed-session", newSessionRequest());
+  assert.equal(runtimes.length, 1);
+  await assert.rejects(secondCreate, SessionManagerError);
+
+  runtimes[0]!.readyDeferred.resolve();
+  await firstCreate;
+});
+
 test("requireSession throws SessionManagerError for unknown sessions", () => {
   const { manager } = createManager();
 

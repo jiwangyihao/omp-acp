@@ -41,6 +41,7 @@ export class SessionManager {
   readonly #idGenerator: () => string;
   readonly #sessions = new Map<string, SessionRecord>();
   readonly #pendingRuntimes = new Set<RuntimeAdapter>();
+  readonly #pendingSessionIds = new Set<string>();
   #cleanupGeneration = 0;
 
   constructor(options: SessionManagerOptions) {
@@ -59,46 +60,53 @@ export class SessionManager {
     params: NewSessionRequest | LoadSessionRequest | ResumeSessionRequest,
     beforePublish?: BeforePublishRuntime,
   ): Promise<SessionRecord> {
-    if (this.#sessions.has(sessionId)) {
+    if (this.#sessions.has(sessionId) || this.#pendingSessionIds.has(sessionId)) {
       throw new SessionManagerError(`Session already exists: ${sessionId}`);
     }
+    this.#pendingSessionIds.add(sessionId);
 
     const input: RuntimeFactoryInput = {
       cwd: params.cwd,
       mcpServers: params.mcpServers ?? [],
       sessionId,
     };
-    const runtime = this.#runtimeFactory(input);
     const cleanupGeneration = this.#cleanupGeneration;
-    this.#pendingRuntimes.add(runtime);
+    let runtime: RuntimeAdapter | undefined;
 
     try {
-      await runtime.ready;
-      if (beforePublish !== undefined) {
-        await beforePublish(runtime);
+      runtime = this.#runtimeFactory(input);
+      this.#pendingRuntimes.add(runtime);
+
+      try {
+        await runtime.ready;
+        if (beforePublish !== undefined) {
+          await beforePublish(runtime);
+        }
+      } catch (cause) {
+        if (this.#pendingRuntimes.delete(runtime)) {
+          await runtime.close();
+        }
+        throw new SessionManagerError(`Runtime failed to become ready for session ${sessionId}`, { cause });
       }
-    } catch (cause) {
-      if (this.#pendingRuntimes.delete(runtime)) {
+
+      this.#pendingRuntimes.delete(runtime);
+      if (cleanupGeneration !== this.#cleanupGeneration) {
         await runtime.close();
+        throw new SessionManagerError(`Session creation was cancelled during cleanup for session ${sessionId}`);
       }
-      throw new SessionManagerError(`Runtime failed to become ready for session ${sessionId}`, { cause });
-    }
 
-    this.#pendingRuntimes.delete(runtime);
-    if (cleanupGeneration !== this.#cleanupGeneration) {
-      await runtime.close();
-      throw new SessionManagerError(`Session creation was cancelled during cleanup for session ${sessionId}`);
+      const session: SessionRecord = {
+        sessionId,
+        cwd: params.cwd,
+        mcpServers: params.mcpServers ?? [],
+        runtime,
+        activePrompt: undefined,
+      };
+      this.#sessions.set(sessionId, session);
+      return session;
+    } finally {
+      this.#pendingSessionIds.delete(sessionId);
     }
-
-    const session: SessionRecord = {
-      sessionId,
-      cwd: params.cwd,
-      mcpServers: params.mcpServers ?? [],
-      runtime,
-      activePrompt: undefined,
-    };
-    this.#sessions.set(sessionId, session);
-    return session;
   }
 
   requireSession(sessionId: string): SessionRecord {
@@ -160,6 +168,7 @@ export class SessionManager {
     const pendingRuntimes = Array.from(this.#pendingRuntimes);
     this.#sessions.clear();
     this.#pendingRuntimes.clear();
+    this.#pendingSessionIds.clear();
 
     for (const session of sessions) {
       session.activePrompt?.cancellation.cancel();
