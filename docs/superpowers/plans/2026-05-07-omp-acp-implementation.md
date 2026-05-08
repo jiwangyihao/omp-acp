@@ -435,14 +435,14 @@ node scripts/smoke-acp.mjs
 
 **发布前门禁：**
 
-- [ ] `npm run check` 通过；
-- [ ] `npm run build` 通过；
-- [ ] stdio smoke 通过；
-- [ ] 真实 `omp --mode rpc` smoke 通过，或记录本机不可用原因；
-- [ ] Zed 手工 smoke 覆盖：new thread、prompt、tool call、edit diff、cancel、session list/load；
-- [ ] capability matrix 与实际 `initialize` 输出一致；
-- [ ] `private: true` 只在决定发布时移除；
-- [ ] README 不包含未发布 npm 包的误导性 `npx -y omp-acp` 指令。
+- [x] `npm run check` 通过；
+- [x] `npm run build` 通过；
+- [x] stdio smoke 通过（`npm run smoke:acp`）；
+- [x] 真实 `omp --mode rpc` ready smoke 通过（`omp/14.7.6`）；
+- [ ] Zed 手工 smoke 覆盖：new thread、prompt、tool call、edit diff、cancel、session list/load（当前环境 `zed --version` 不可用，见 `docs/release-checklist.md`）；
+- [x] capability matrix 与实际 `initialize` 输出一致；
+- [x] `private: true` 只在决定发布时移除；
+- [x] README 不包含未发布 npm 包的误导性 `npx -y omp-acp` 指令。
 
 ---
 
@@ -482,4 +482,4 @@ node scripts/smoke-acp.mjs
 
 ## 7. 当前下一步
 
-阶段 1 至阶段 6 已完成。当前下一步是进入 **阶段 7：Zed smoke、发布准备与回归矩阵**；该阶段不新增核心协议能力，只做验证、文档、打包和发布门禁。
+阶段 1 至阶段 6 已完成。阶段 7 的自动化发布门禁、build-output smoke、真实 OMP RPC ready smoke 和发布文档已完成；Zed 手工 smoke 仍因当前环境没有 `zed` 命令而保持发布阻塞。下一步是在装有 Zed 的本机按 `scripts/smoke-zed.md` 执行手工验证。

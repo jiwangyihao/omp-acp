@@ -1,12 +1,10 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { AgentCapabilities, Implementation } from "@agentclientprotocol/sdk";
 
-const packageJsonPath = resolve(
-  dirname(fileURLToPath(import.meta.url)),
-  "../../package.json",
-);
+const moduleDir = dirname(fileURLToPath(import.meta.url));
+const packageJsonPath = resolvePackageJsonPath(moduleDir);
 
 interface PackageMetadata {
   name: string;
@@ -41,4 +39,19 @@ export function buildAgentInfo(): Implementation {
     name: packageMetadata.name,
     version: packageMetadata.version,
   };
+}
+
+function resolvePackageJsonPath(moduleDir: string): string {
+  const candidates = [
+    resolve(moduleDir, "../package.json"),
+    resolve(moduleDir, "../../package.json"),
+  ];
+
+  for (const candidate of candidates) {
+    if (existsSync(candidate)) {
+      return candidate;
+    }
+  }
+
+  throw new Error(`Unable to locate package.json from ${moduleDir}`);
 }

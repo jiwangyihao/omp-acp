@@ -39,6 +39,14 @@ For fixture-only development, the adapter also supports these local test seams:
 
 Do not use those fixture seams for real Zed usage; they exist to make smoke tests deterministic.
 
+For build-output smoke before opening Zed, run:
+
+```bash
+npm run smoke:acp
+```
+
+For the manual Zed release gate, follow `scripts/smoke-zed.md`.
+
 ## Currently declared ACP support
 
 - `session/new`

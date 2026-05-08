@@ -15,8 +15,9 @@
   ],
   "scripts": {
     "dev": "tsx src/index.ts",
-    "build": "tsup",
+    "build": "tsup src/index.ts --format esm --platform node --target node20 --clean",
     "start": "node dist/index.js",
+    "smoke:acp": "npm run build && node scripts/smoke-acp.mjs",
     "typecheck": "tsc --noEmit",
     "test": "node --import tsx --test --test-concurrency=1 test/contract/omp-rpc/rpc-client.test.ts test/contract/omp-rpc/tool-events.test.ts test/runtime/omp/command.test.ts test/smoke/acp-stdio.test.ts test/smoke/session-prompt.test.ts test/unit/acp/initialize.test.ts test/unit/acp/session-handlers.test.ts test/unit/acp/session-list-load.test.ts test/unit/acp/session-resume.test.ts test/unit/runtime/omp/config.test.ts test/unit/runtime/omp/commands.test.ts test/unit/runtime/omp/frames.test.ts test/unit/runtime/omp/host-tools.test.ts test/unit/runtime/omp/sessions.test.ts test/unit/session/manager.test.ts test/unit/translate/diffs.test.ts test/unit/translate/events-message.test.ts test/unit/translate/prompt.test.ts test/unit/translate/tools.test.ts",
     "check": "npm run typecheck && node --import tsx --test --test-concurrency=1 test/contract/omp-rpc/rpc-client.test.ts test/contract/omp-rpc/tool-events.test.ts test/runtime/omp/command.test.ts test/smoke/acp-stdio.test.ts test/smoke/session-prompt.test.ts test/unit/acp/initialize.test.ts test/unit/acp/session-handlers.test.ts test/unit/acp/session-list-load.test.ts test/unit/acp/session-resume.test.ts test/unit/runtime/omp/config.test.ts test/unit/runtime/omp/commands.test.ts test/unit/runtime/omp/frames.test.ts test/unit/runtime/omp/host-tools.test.ts test/unit/runtime/omp/sessions.test.ts test/unit/session/manager.test.ts test/unit/translate/diffs.test.ts test/unit/translate/events-message.test.ts test/unit/translate/prompt.test.ts test/unit/translate/tools.test.ts"

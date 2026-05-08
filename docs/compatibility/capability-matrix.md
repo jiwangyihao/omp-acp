@@ -15,7 +15,7 @@
 
 | 能力 | 当前状态 | 声明策略 | 验证要求 |
 |---|---|---|---|
-| ACP stdio transport | 已实现 | 内部可用；发布仍需后续阶段 | `test/smoke/acp-stdio.test.ts` |
+| ACP stdio transport | 已实现 | 内部可用；发布仍需通过 release checklist | `test/smoke/acp-stdio.test.ts` + `scripts/smoke-acp.mjs` |
 | `initialize` | 已实现 | 声明已实现的 baseline session/new、text/resource_link/image/embedded prompt、session/list、text-history session/load、session/resume；`promptCapabilities.audio` 仍为 `false`，MCP/fork/close 仍不声明或为 `false` | `test/unit/acp/initialize.test.ts` + smoke tests |
 | `session/new` | 已实现 | baseline ACP method 可用；不声明 session fork/close | `test/smoke/session-prompt.test.ts` |
 | `session/prompt` text/resource_link | 已实现 | baseline text 与 resource_link 可用 | `test/unit/translate/prompt.test.ts` + `test/smoke/session-prompt.test.ts` |
@@ -42,6 +42,19 @@
 | OMP slash commands | 已实现 | 仅 discovery metadata；不执行、不作为可用 slash command 暴露 | `test/unit/runtime/omp/commands.test.ts` |
 | OMP skills commands | 已实现 | 仅 discovery metadata；不执行、不作为可用 slash command 暴露 | `test/unit/runtime/omp/commands.test.ts` |
 | `omp.extensions` manifest entries | 已实现 | 仅 package/module entry discovery metadata；不执行 extension，不声称 runtime-registered command names | `test/unit/runtime/omp/commands.test.ts` |
+
+
+## 发布验证
+
+发布前必须同时满足：
+
+1. `npm run check` 通过；
+2. `npm run build` 通过；
+3. `npm run smoke:acp` 通过；
+4. 真实 `omp --mode rpc` ready smoke 通过，或在 `docs/release-checklist.md` 记录不可用原因；
+5. `scripts/smoke-zed.md` 中的 Zed 手工 smoke 全部通过。
+
+当前环境中 `zed --version` 不可用，因此 Zed 手工 smoke 仍是发布阻塞项。
 
 ## 更新规则
 
