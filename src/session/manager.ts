@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { LoadSessionRequest, NewSessionRequest, NewSessionResponse, ResumeSessionRequest } from "@agentclientprotocol/sdk";
+import type { ForkSessionRequest, LoadSessionRequest, NewSessionRequest, NewSessionResponse, ResumeSessionRequest } from "@agentclientprotocol/sdk";
 import type { RuntimeAdapter } from "../runtime/RuntimeAdapter.ts";
 import { PromptCancellation } from "./cancellation.ts";
 
@@ -42,6 +42,7 @@ export class SessionManager {
   readonly #sessions = new Map<string, SessionRecord>();
   readonly #pendingRuntimes = new Set<RuntimeAdapter>();
   readonly #pendingSessionIds = new Map<string, symbol>();
+  readonly #activeForkSources = new Set<string>();
   #cleanupGeneration = 0;
 
   constructor(options: SessionManagerOptions) {
@@ -55,9 +56,33 @@ export class SessionManager {
     return { sessionId };
   }
 
+  reserveSessionId(): string {
+    return this.#idGenerator();
+  }
+
+  tryGetSession(sessionId: string): SessionRecord | undefined {
+    return this.#sessions.get(sessionId);
+  }
+
+  beginForkSource(sessionId: string): { finish: () => void } {
+    if (this.#activeForkSources.has(sessionId)) {
+      throw new SessionManagerError(`Session is already being forked: ${sessionId}`);
+    }
+    const session = this.#sessions.get(sessionId);
+    if (session?.activePrompt !== undefined) {
+      throw new SessionManagerError(`Session has an active prompt: ${sessionId}`);
+    }
+    this.#activeForkSources.add(sessionId);
+    return {
+      finish: () => {
+        this.#activeForkSources.delete(sessionId);
+      },
+    };
+  }
+
   async createSessionWithId(
     sessionId: string,
-    params: NewSessionRequest | LoadSessionRequest | ResumeSessionRequest,
+    params: NewSessionRequest | LoadSessionRequest | ResumeSessionRequest | ForkSessionRequest,
     beforePublish?: BeforePublishRuntime,
   ): Promise<SessionRecord> {
     if (this.#sessions.has(sessionId) || this.#pendingSessionIds.has(sessionId)) {
@@ -122,6 +147,9 @@ export class SessionManager {
 
   beginPrompt(sessionId: string): { session: SessionRecord; cancellation: PromptCancellation; finish: () => void } {
     const session = this.requireSession(sessionId);
+    if (this.#activeForkSources.has(sessionId)) {
+      throw new SessionManagerError(`Session is being forked: ${sessionId}`);
+    }
     if (session.activePrompt !== undefined) {
       throw new SessionManagerError(`Session already has an active prompt: ${sessionId}`);
     }
@@ -172,6 +200,7 @@ export class SessionManager {
     this.#sessions.clear();
     this.#pendingRuntimes.clear();
     this.#pendingSessionIds.clear();
+    this.#activeForkSources.clear();
 
     for (const session of sessions) {
       session.activePrompt?.cancellation.cancel();
