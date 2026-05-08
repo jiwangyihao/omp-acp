@@ -194,7 +194,7 @@ test("finish clears only the active prompt it owns", async () => {
   assert.equal(second.session.activePrompt, undefined);
 });
 
-test("cancelPrompt marks the active prompt cancelled and requests runtime cancellation", async () => {
+test("cancelPrompt marks the active prompt cancelled and requests runtime abort", async () => {
   const { manager, runtimes } = createManager();
   const createPromise = manager.createSession(newSessionRequest());
   runtimes[0]!.readyDeferred.resolve();
@@ -204,7 +204,7 @@ test("cancelPrompt marks the active prompt cancelled and requests runtime cancel
   await manager.cancelPrompt("session-1");
 
   assert.equal(active.cancellation.isCancelled, true);
-  assert.deepEqual(runtimes[0]!.requests, [{ method: "cancel", params: { sessionId: "session-1" } }]);
+  assert.deepEqual(runtimes[0]!.requests, [{ method: "abort", params: undefined }]);
 });
 
 test("cancelPrompt ignores runtime cancel request failures", async () => {
@@ -213,12 +213,12 @@ test("cancelPrompt ignores runtime cancel request failures", async () => {
   runtimes[0]!.readyDeferred.resolve();
   await createPromise;
   const active = manager.beginPrompt("session-1");
-  runtimes[0]!.requestFailure = new Error("cancel failed");
+  runtimes[0]!.requestFailure = new Error("abort failed");
 
   await manager.cancelPrompt("session-1");
 
   assert.equal(active.cancellation.isCancelled, true);
-  assert.deepEqual(runtimes[0]!.requests, [{ method: "cancel", params: { sessionId: "session-1" } }]);
+  assert.deepEqual(runtimes[0]!.requests, [{ method: "abort", params: undefined }]);
 });
 
 test("closeAll cancels active prompts, closes runtimes, and clears sessions", async () => {

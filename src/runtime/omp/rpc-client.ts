@@ -18,11 +18,13 @@ export class OmpRpcClientError extends Error {
 }
 
 export class OmpRpcResponseError extends OmpRpcClientError {
-  readonly responseError: unknown;
+  readonly command: string;
+  readonly responseError: string;
 
-  constructor(responseError: unknown) {
-    super("OMP RPC response error");
+  constructor(command: string, responseError: string) {
+    super(`OMP RPC ${command} response error: ${responseError}`);
     this.name = "OmpRpcResponseError";
+    this.command = command;
     this.responseError = responseError;
   }
 }
@@ -82,7 +84,12 @@ export class OmpRpcClient implements RuntimeAdapter {
     }
 
     const id = this.nextRequestId++;
-    const request = params === undefined ? { id, method } : { id, method, params };
+    let request: Record<string, unknown>;
+    try {
+      request = buildCommandFrame(id, method, params);
+    } catch (error) {
+      return Promise.reject(toClientError(error, "Invalid OMP RPC request"));
+    }
 
     return new Promise<unknown>((resolve, reject) => {
       this.pending.set(id, { resolve, reject });
@@ -190,10 +197,10 @@ export class OmpRpcClient implements RuntimeAdapter {
       }
 
       this.pending.delete(frame.id);
-      if (Object.hasOwn(frame, "error")) {
-        pending.reject(new OmpRpcResponseError(frame.error));
+      if (!frame.success) {
+        pending.reject(new OmpRpcResponseError(frame.command, frame.error));
       } else {
-        pending.resolve(frame.result);
+        pending.resolve(Object.hasOwn(frame, "data") ? frame.data : undefined);
       }
       return;
     }
@@ -249,6 +256,69 @@ export class OmpRpcClient implements RuntimeAdapter {
 
 export function startOmpRpcClient(options?: OmpRpcClientOptions): OmpRpcClient {
   return new OmpRpcClient(options);
+}
+
+function buildCommandFrame(id: OmpRpcRequestId, method: string, params: unknown): Record<string, unknown> {
+  switch (method) {
+    case "prompt": {
+      const promptParams = requireRecord(params, method);
+      const message = requireString(promptParams, "message", method);
+      const frame: Record<string, unknown> = { id, type: method, message };
+      if (Object.hasOwn(promptParams, "images")) {
+        frame.images = promptParams.images;
+      }
+      return frame;
+    }
+    case "switch_session":
+      return { id, type: method, sessionPath: requireString(requireRecord(params, method), "sessionPath", method) };
+    case "get_state":
+    case "get_available_models":
+    case "abort":
+      return { id, type: method };
+    case "set_model": {
+      const modelParams = requireRecord(params, method);
+      return {
+        id,
+        type: method,
+        provider: requireString(modelParams, "provider", method),
+        modelId: requireString(modelParams, "modelId", method),
+      };
+    }
+    case "set_thinking_level":
+      return { id, type: method, level: requireString(requireRecord(params, method), "level", method) };
+    case "set_steering_mode":
+    case "set_follow_up_mode":
+    case "set_interrupt_mode":
+      return { id, type: method, mode: requireString(requireRecord(params, method), "mode", method) };
+    case "set_auto_compaction":
+      return { id, type: method, enabled: requireBoolean(requireRecord(params, method), "enabled", method) };
+    default:
+      throw new OmpRpcClientError(`Unsupported OMP RPC method: ${method}`);
+  }
+}
+
+function requireRecord(value: unknown, command: string): Record<string, unknown> {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new OmpRpcClientError(`OMP RPC ${command} params must be an object`);
+  }
+  return value as Record<string, unknown>;
+}
+
+function requireString(params: Record<string, unknown>, field: string, command: string): string {
+  const value = params[field];
+  if (typeof value !== "string") {
+    throw new OmpRpcClientError(`OMP RPC ${command} params.${field} must be a string`);
+  }
+  return value;
+}
+
+
+function requireBoolean(params: Record<string, unknown>, field: string, command: string): boolean {
+  const value = params[field];
+  if (typeof value !== "boolean") {
+    throw new OmpRpcClientError(`OMP RPC ${command} params.${field} must be a boolean`);
+  }
+  return value;
 }
 
 function toClientError(error: unknown, message: string): OmpRpcClientError {

@@ -173,7 +173,7 @@ export class SessionManager {
     session.activePrompt?.cancellation.cancel();
 
     try {
-      await session.runtime.request("cancel", { sessionId });
+      await session.runtime.request("abort");
     } catch {
     }
   }

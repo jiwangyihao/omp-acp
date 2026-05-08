@@ -14,17 +14,34 @@ function writeReady(): void {
   writeFrame({ type: "ready" });
 }
 
+function writeSuccess(id: unknown, command: string, data?: unknown): void {
+  const frame: JsonObject = { id, type: "response", command, success: true };
+  if (data !== undefined) {
+    frame.data = data;
+  }
+  writeFrame(frame);
+}
+
+function writeFailure(id: unknown, command: string, error: string): void {
+  writeFrame({ id, type: "response", command, success: false, error });
+}
+
 function handleRequest(request: JsonObject): void {
-  if (scenario === "raw-frame-observer" && request.type === "host_tool_result") {
+  const id = request.id;
+  const command = typeof request.type === "string" ? request.type : "";
+
+  if (scenario === "raw-frame-observer") {
     writeFrame({ type: "raw_frame_observed", frame: request });
-    return;
+    if (command === "host_tool_result") {
+      return;
+    }
   }
 
-  if (scenario === "session-host-tool-unregistered" && request.type === "host_tool_result") {
+  if (scenario === "session-host-tool-unregistered" && command === "host_tool_result") {
     const pending = pendingHostToolPrompt;
     pendingHostToolPrompt = undefined;
     if (pending !== undefined) {
-      writeFrame({ type: "response", id: pending.id, result: { ok: true } });
+      writeSuccess(pending.id, "prompt", { ok: true });
     }
     return;
   }
@@ -40,54 +57,70 @@ function handleRequest(request: JsonObject): void {
     process.exit(42);
   }
 
-  const id = request.id;
-  const method = request.method;
-
-  if (method === "echo") {
-    const result: JsonObject = { method };
-    if (Object.hasOwn(request, "params")) {
-      result.params = request.params;
+  if (command === "get_state") {
+    if (scenario === "event-before-response") {
+      writeFrame({ type: "message_update", content: "hello" });
     }
-    writeFrame({ type: "response", id, result });
+    writeSuccess(id, command);
     return;
   }
 
-  if (method === "slowEcho") {
-    setTimeout(() => {
-      writeFrame({ type: "response", id, result: { method, params: request.params } });
-    }, 50);
+  if (command === "get_available_models") {
+    writeSuccess(id, command, []);
     return;
   }
 
-  if (method === "fastEcho") {
-    writeFrame({ type: "response", id, result: { method, params: request.params } });
+  if (command === "switch_session") {
+    writeSuccess(id, command, { ok: true, sessionPath: request.sessionPath });
     return;
   }
 
-  if (method === "eventThenResponse") {
-    writeFrame({ type: "message_update", content: "hello" });
-    writeFrame({ type: "response", id, result: { ok: true } });
+  if (command === "set_model") {
+    if (request.provider === "fail") {
+      writeFailure(id, command, "fixture failure");
+      return;
+    }
+    writeSuccess(id, command, { provider: request.provider, modelId: request.modelId });
     return;
   }
 
-
-  if (method === "switch_session") {
-    writeFrame({ type: "response", id, result: { ok: true, sessionPath: (request.params as { sessionPath?: unknown } | undefined)?.sessionPath } });
+  if (command === "set_thinking_level") {
+    writeSuccess(id, command, { level: request.level });
     return;
   }
-  if (method === "prompt") {
+
+  if (command === "set_steering_mode") {
+    setTimeout(() => writeSuccess(id, command, { mode: request.mode }), 50);
+    return;
+  }
+
+  if (command === "set_follow_up_mode" || command === "set_interrupt_mode") {
+    writeSuccess(id, command, { mode: request.mode });
+    return;
+  }
+
+  if (command === "set_auto_compaction") {
+    writeSuccess(id, command, { enabled: request.enabled });
+    return;
+  }
+
+  if (command === "prompt" && !isValidPromptCommand(request)) {
+    writeFailure(id, command, "invalid prompt command frame");
+    return;
+  }
+  if (command === "prompt") {
     if (scenario === "session-happy") {
-      const prompt = getPromptText(request.params);
+      const prompt = getPromptText(request);
       writeFrame({ type: "message_update", content: prompt });
       writeFrame({ type: "message_update", kind: "thought", content: "thinking" });
-      writeFrame({ type: "response", id, result: { ok: true } });
+      writeSuccess(id, command, { ok: true });
       return;
     }
 
     if (scenario === "session-images") {
-      const prompt = getPromptText(request.params);
-      writeFrame({ type: "message_update", content: JSON.stringify({ prompt, images: getPromptImages(request.params) }) });
-      writeFrame({ type: "response", id, result: { ok: true } });
+      const prompt = getPromptText(request);
+      writeFrame({ type: "message_update", content: JSON.stringify({ prompt, images: getPromptImages(request) }) });
+      writeSuccess(id, command, { ok: true });
       return;
     }
 
@@ -96,19 +129,18 @@ function handleRequest(request: JsonObject): void {
       return;
     }
 
-
     if (scenario === "extension-ui-request") {
       writeFrame({ type: "extension_ui_request", method: "showDialog", id: "ui-smoke-1" });
       return;
     }
     if (scenario === "session-cancel") {
-      pendingCancelPrompt = { id, params: request.params };
+      pendingCancelPrompt = { id, params: request };
       return;
     }
 
     if (scenario === "session-cwd") {
       writeFrame({ type: "message_update", content: process.cwd() });
-      writeFrame({ type: "response", id, result: { ok: true } });
+      writeSuccess(id, command, { ok: true });
       return;
     }
 
@@ -122,42 +154,61 @@ function handleRequest(request: JsonObject): void {
         diff: { path: "config.json", oldText: "old", newText: "new" },
       });
       writeFrame({ type: "tool_execution_end", toolCallId: "tool_smoke_1", status: "completed", output: "done" });
-      writeFrame({ type: "response", id, result: { ok: true } });
+      writeSuccess(id, command, { ok: true });
       return;
     }
 
     if (scenario === "session-host-tool-unregistered") {
-      pendingHostToolPrompt = { id, params: request.params };
+      pendingHostToolPrompt = { id, params: request };
       writeFrame({ type: "host_tool_call", id: "host_smoke_1", toolCallId: "host_tool_smoke_1", toolName: "missing_tool", arguments: { value: 1 } });
+      return;
+    }
+
+    if (scenario === "raw-frame-observer") {
+      writeSuccess(id, command);
       return;
     }
   }
 
-  if (method === "cancel" && scenario === "session-cancel") {
-    writeFrame({ type: "response", id, result: { ok: true } });
+  if (command === "abort" && scenario === "session-cancel") {
+    writeSuccess(id, command, { ok: true });
     const pending = pendingCancelPrompt;
     pendingCancelPrompt = undefined;
     if (pending !== undefined) {
       setTimeout(() => {
         writeFrame({ type: "message_update", content: "late message" });
-        writeFrame({ type: "response", id: pending.id, result: { ok: true } });
+        writeSuccess(pending.id, "prompt", { ok: true });
       }, 50);
     }
     return;
   }
-  if (method === "fail") {
-    writeFrame({ type: "response", id, error: "fixture failure" });
-    return;
-  }
 
-  writeFrame({ type: "response", id, error: `unsupported fixture method: ${String(method)}` });
+
+  writeFailure(id, command || "unknown", `unsupported fixture method: ${String(command)}`);
 }
 
 function getPromptText(params: unknown): string {
-  if (typeof params === "object" && params !== null && !Array.isArray(params) && typeof (params as { prompt?: unknown }).prompt === "string") {
-    return (params as { prompt: string }).prompt;
+  if (typeof params === "object" && params !== null && !Array.isArray(params)) {
+    const promptParams = params as { message?: unknown };
+    if (typeof promptParams.message === "string") {
+      return promptParams.message;
+    }
   }
   return "";
+}
+
+function isValidPromptCommand(params: unknown): boolean {
+  if (typeof params !== "object" || params === null || Array.isArray(params)) {
+    return false;
+  }
+  const promptParams = params as Record<string, unknown>;
+  return (
+    typeof promptParams.message === "string" &&
+    !Object.hasOwn(promptParams, "prompt") &&
+    !Object.hasOwn(promptParams, "sessionId") &&
+    !Object.hasOwn(promptParams, "method") &&
+    !Object.hasOwn(promptParams, "params")
+  );
 }
 
 function getPromptImages(params: unknown): unknown {
@@ -166,6 +217,7 @@ function getPromptImages(params: unknown): unknown {
   }
   return [];
 }
+
 
 function handleStdinChunk(chunk: string): void {
   stdinBuffer += chunk;

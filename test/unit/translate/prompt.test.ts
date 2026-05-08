@@ -14,8 +14,10 @@ test("translatePromptToOmpRequest maps a text prompt block to an OMP prompt requ
 
   assert.deepEqual(result, {
     method: "prompt",
-    params: { sessionId: "session-1", prompt: "hello agent" },
+    params: { message: "hello agent" },
   });
+  assert.equal("sessionId" in result.params, false);
+  assert.equal("prompt" in result.params, false);
 });
 
 test("translatePromptToOmpRequest preserves multiple text blocks in order", () => {
@@ -27,7 +29,7 @@ test("translatePromptToOmpRequest preserves multiple text blocks in order", () =
     ]),
   );
 
-  assert.equal(result.params.prompt, "first\n\nsecond\n\nthird");
+  assert.equal(result.params.message, "first\n\nsecond\n\nthird");
 });
 
 test("translatePromptToOmpRequest formats resource_link blocks with title, name, and description", () => {
@@ -54,10 +56,10 @@ test("translatePromptToOmpRequest formats resource_link blocks with title, name,
   );
 
   assert.equal(
-    titled.params.prompt,
+    titled.params.message,
     "[Resource: Design Spec] file:///project/spec.md\nUse this as context.",
   );
-  assert.equal(named.params.prompt, "[Resource: notes.md] file:///project/notes.md");
+  assert.equal(named.params.message, "[Resource: notes.md] file:///project/notes.md");
 });
 
 test("translatePromptToOmpRequest forwards image blocks separately without prompt text pollution", () => {
@@ -72,14 +74,15 @@ test("translatePromptToOmpRequest forwards image blocks separately without promp
   assert.deepEqual(result, {
     method: "prompt",
     params: {
-      sessionId: "session-1",
-      prompt: "describe",
+      message: "describe",
       images: [
         { type: "image", data: "abc", mimeType: "image/png", uri: "file:///img.png" },
         { type: "image", data: "def", mimeType: "image/jpeg" },
       ],
     },
   });
+  assert.equal("sessionId" in result.params, false);
+  assert.equal("prompt" in result.params, false);
 });
 
 test("translatePromptToOmpRequest embeds text and blob resources as stable prompt sections", () => {
@@ -93,7 +96,7 @@ test("translatePromptToOmpRequest embeds text and blob resources as stable promp
   );
 
   assert.equal(
-    result.params.prompt,
+    result.params.message,
     "use context\n\n[Embedded Resource: file:///x.txt]\nMIME: text/plain\ncontents\n\n[Embedded Blob Resource: file:///x.bin]\nMIME: application/octet-stream\nYmlu\n\n[Embedded Resource: file:///no-mime.txt]\nplain",
   );
 });

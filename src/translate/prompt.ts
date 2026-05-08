@@ -6,8 +6,7 @@ export { PromptTranslationError } from "./errors.ts";
 export type OmpPromptRequest = {
   method: "prompt";
   params: {
-    sessionId: string;
-    prompt: string;
+    message: string;
     images?: OmpImageContent[];
   };
 };
@@ -34,8 +33,7 @@ export function translatePromptToOmpRequest(params: PromptRequest): OmpPromptReq
   return {
     method: "prompt",
     params: {
-      sessionId: params.sessionId,
-      prompt: promptParts.join("\n\n"),
+      message: promptParts.join("\n\n"),
       ...(images.length > 0 ? { images } : {}),
     },
   };

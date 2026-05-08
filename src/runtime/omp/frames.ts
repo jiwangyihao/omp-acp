@@ -13,12 +13,21 @@ export type OmpRpcReadyFrame = {
   type: "ready";
 };
 
-export type OmpRpcResponseFrame = {
-  type: "response";
-  id: OmpRpcRequestId;
-  result?: unknown;
-  error?: unknown;
-};
+export type OmpRpcResponseFrame =
+  | {
+      type: "response";
+      id: OmpRpcRequestId;
+      command: string;
+      success: true;
+      data?: unknown;
+    }
+  | {
+      type: "response";
+      id: OmpRpcRequestId;
+      command: string;
+      success: false;
+      error: string;
+    };
 
 export type OmpRpcFrame = OmpRpcReadyFrame | OmpRpcResponseFrame | RuntimeEvent;
 
@@ -69,29 +78,34 @@ function parseJson(line: string): unknown {
 
 function parseResponseFrame(rawFrame: Record<string, unknown>): OmpRpcResponseFrame {
   const id = rawFrame.id;
-  if (typeof id !== "string" && typeof id !== "number") {
+  if ((typeof id !== "string" || id.length === 0) && typeof id !== "number") {
     throw new OmpRpcFrameParseError("Invalid OMP RPC response frame: missing id");
   }
 
-  const hasResult = Object.hasOwn(rawFrame, "result");
-  const hasError = Object.hasOwn(rawFrame, "error");
-  if (hasResult === hasError) {
-    throw new OmpRpcFrameParseError(
-      "Invalid OMP RPC response frame: must include exactly one result or error",
-    );
+  const command = rawFrame.command;
+  if (typeof command !== "string" || command.length === 0) {
+    throw new OmpRpcFrameParseError("Invalid OMP RPC response frame: missing string command");
   }
 
-  const response: OmpRpcResponseFrame = { type: "response", id };
-
-  if (hasResult) {
-    response.result = rawFrame.result;
+  const success = rawFrame.success;
+  if (typeof success !== "boolean") {
+    throw new OmpRpcFrameParseError("Invalid OMP RPC response frame: missing boolean success");
   }
 
-  if (hasError) {
-    response.error = rawFrame.error;
+  if (!success) {
+    const error = rawFrame.error;
+    if (typeof error !== "string") {
+      throw new OmpRpcFrameParseError("Invalid OMP RPC response frame: missing string error");
+    }
+
+    return { type: "response", id, command, success: false, error };
   }
 
-  return response;
+  if (Object.hasOwn(rawFrame, "data")) {
+    return { type: "response", id, command, success: true, data: rawFrame.data };
+  }
+
+  return { type: "response", id, command, success: true };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

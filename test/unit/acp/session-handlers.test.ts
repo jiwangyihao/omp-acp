@@ -151,7 +151,7 @@ test("text prompt sends agent_message_chunk before returning end_turn", async ()
   const { manager, connection, runtime } = await createSession();
 
   const promptPromise = handleSessionPrompt(promptRequest(), { manager, connection });
-  assert.deepEqual(runtime.requests[0], { method: "prompt", params: { sessionId: "session-1", prompt: "hello" } });
+  assert.deepEqual(runtime.requests[0], { method: "prompt", params: { message: "hello" } });
 
   runtime.emit({ type: "event", eventType: "message_update", raw: { content: "assistant text" } });
   assert.deepEqual(connection.updates, [
@@ -201,14 +201,14 @@ test("extension_error rejects and does not send assistant message", async () => 
   assert.equal(runtime.listeners.size, 0);
 });
 
-test("cancel while prompt pending returns cancelled, requests runtime cancel, suppresses late message, and ignores late success", async () => {
+test("cancel while prompt pending returns cancelled, requests runtime abort, suppresses late message, and ignores late success", async () => {
   const { manager, connection, runtime } = await createSession();
 
   const promptPromise = handleSessionPrompt(promptRequest(), { manager, connection });
   await handleSessionCancel({ sessionId: "session-1" }, manager);
 
   assert.deepEqual(await promptPromise, { stopReason: "cancelled" });
-  assert.deepEqual(runtime.requests[1], { method: "cancel", params: { sessionId: "session-1" } });
+  assert.deepEqual(runtime.requests[1], { method: "abort", params: undefined });
 
   runtime.emit({ type: "event", eventType: "message_update", raw: { content: "too late" } });
   runtime.promptDeferreds[0]!.resolve({});

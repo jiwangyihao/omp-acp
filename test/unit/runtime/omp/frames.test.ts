@@ -16,23 +16,33 @@ describe("parseOmpRpcFrame", () => {
     assert.equal(isOmpRpcReadyFrame(frame), true);
   });
 
-  it("parses response result frames preserving id and result", () => {
-    const frame = parseOmpRpcFrame('{"type":"response","id":1,"result":{"ok":true}}');
-
-    assert.equal(isOmpRpcResponseFrame(frame), true);
-    assert.deepEqual(frame, { type: "response", id: 1, result: { ok: true } });
-  });
-
-  it("parses response error frames preserving id and error", () => {
+  it("parses successful real response frames preserving id, command, success, and data", () => {
     const frame = parseOmpRpcFrame(
-      '{"type":"response","id":"abc","error":{"message":"boom"}}',
+      '{"id":1,"type":"response","command":"get_state","success":true,"data":{"thinkingLevel":"low"}}',
     );
 
     assert.equal(isOmpRpcResponseFrame(frame), true);
     assert.deepEqual(frame, {
       type: "response",
-      id: "abc",
-      error: { message: "boom" },
+      id: 1,
+      command: "get_state",
+      success: true,
+      data: { thinkingLevel: "low" },
+    });
+  });
+
+  it("parses failed real response frames preserving id, command, success, and error", () => {
+    const frame = parseOmpRpcFrame(
+      '{"id":1,"type":"response","command":"set_model","success":false,"error":"Model not found"}',
+    );
+
+    assert.equal(isOmpRpcResponseFrame(frame), true);
+    assert.deepEqual(frame, {
+      type: "response",
+      id: 1,
+      command: "set_model",
+      success: false,
+      error: "Model not found",
     });
   });
 
@@ -84,32 +94,51 @@ describe("parseOmpRpcFrame", () => {
 
   it("rejects response frames missing an id", () => {
     assert.throws(
-      () => parseOmpRpcFrame('{"type":"response","result":{"ok":true}}'),
+      () => parseOmpRpcFrame('{"type":"response","command":"get_state","success":true,"data":{"ok":true}}'),
       (error) =>
         error instanceof OmpRpcFrameParseError && error.message.includes("missing id"),
     );
   });
 
-  it("rejects response frames without a terminal result or error", () => {
+  it("rejects response frames missing a command", () => {
     assert.throws(
-      () => parseOmpRpcFrame('{"type":"response","id":1}'),
+      () => parseOmpRpcFrame('{"type":"response","id":1,"success":true,"data":{"ok":true}}'),
       (error) =>
-        error instanceof OmpRpcFrameParseError && error.message.includes("result or error"),
+        error instanceof OmpRpcFrameParseError && error.message.includes("missing string command"),
     );
   });
 
-  it("rejects response frames with both result and error", () => {
+  it("rejects response frames missing a boolean success", () => {
     assert.throws(
-      () => parseOmpRpcFrame('{"type":"response","id":1,"result":{},"error":{}}'),
+      () => parseOmpRpcFrame('{"type":"response","id":1,"command":"get_state","data":{"ok":true}}'),
       (error) =>
-        error instanceof OmpRpcFrameParseError && error.message.includes("exactly one"),
+        error instanceof OmpRpcFrameParseError && error.message.includes("missing boolean success"),
+    );
+  });
+
+  it("rejects failed response frames without a string error", () => {
+    assert.throws(
+      () => parseOmpRpcFrame('{"type":"response","id":1,"command":"set_model","success":false}'),
+      (error) =>
+        error instanceof OmpRpcFrameParseError && error.message.includes("missing string error"),
+    );
+  });
+
+  it("rejects legacy result-only response frames", () => {
+    assert.throws(
+      () => parseOmpRpcFrame('{"id":1,"type":"response","result":{}}'),
+      (error) =>
+        error instanceof OmpRpcFrameParseError && error.message.includes("missing string command"),
     );
   });
 
   it("rejects response frames with invalid present ids", () => {
     for (const id of [null, true, {}, []]) {
       assert.throws(
-        () => parseOmpRpcFrame(JSON.stringify({ type: "response", id, result: { ok: true } })),
+        () =>
+          parseOmpRpcFrame(
+            JSON.stringify({ type: "response", id, command: "get_state", success: true, data: { ok: true } }),
+          ),
         (error) =>
           error instanceof OmpRpcFrameParseError &&
           (error.message.includes("missing id") || error.message.includes("invalid id")),
