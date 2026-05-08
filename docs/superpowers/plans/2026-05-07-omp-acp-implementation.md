@@ -287,6 +287,8 @@ node scripts/smoke-acp.mjs
 
 ### 阶段 3：session/new、session/prompt 与消息流
 
+**状态：** 已完成。已交付 session manager、prompt/resource_link 转换、message/thought event 转换、session/new/prompt/cancel handlers、runtime fixture seam、session prompt smoke tests 与 cwd 传递修复；tool/edit/commands 仍留到后续阶段。
+
 **目标：** 实现最小可用会话：Zed 可创建新 thread，发送 prompt，并看到 OMP message/thought stream。
 
 **自治边界：** 本阶段只处理文本 prompt、消息流和取消。tool、edit、commands 暂不完整映射。
@@ -316,11 +318,11 @@ node scripts/smoke-acp.mjs
 
 **验收标准：**
 
-- [ ] 新 session 可接受一个文本 prompt；
-- [ ] message chunk 与 thought chunk 不混流；
-- [ ] runtime error 不会伪装为 assistant message；
-- [ ] cancel 后不会继续向已取消 prompt 推送普通完成事件；
-- [ ] `initialize` 只在本阶段完成后声明对应 prompt 能力。
+- [x] 新 session 可接受一个文本 prompt；
+- [x] message chunk 与 thought chunk 不混流；
+- [x] runtime error 不会伪装为 assistant message；
+- [x] cancel 后不会继续向已取消 prompt 推送普通完成事件；
+- [x] `initialize` 只在本阶段完成后声明对应 prompt 能力。
 
 ### 阶段 4：tool call、edit diff 与 host tool bridge
 
@@ -477,4 +479,4 @@ node scripts/smoke-acp.mjs
 
 ## 7. 当前下一步
 
-阶段 1 和阶段 2 已完成。当前下一步是进入 **阶段 3：session/new、session/prompt 与消息流**，将 ACP session handler 接入已完成的 runtime client，并保持 tool、edit、commands 等能力在后续阶段实现前不声明。
+阶段 1、阶段 2 和阶段 3 已完成。当前下一步是进入 **阶段 4：tool call、edit diff 与 host tool bridge**，在不声明 MCP、terminal/filesystem delegation、image/embedded context 等未实现能力的前提下，忠实映射 OMP runtime 已经发出的 tool/edit 事件。

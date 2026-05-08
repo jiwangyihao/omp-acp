@@ -20,11 +20,11 @@ npm run typecheck
 npm run check
 ```
 
-### Stage 1 status
+### Stage 3 status
 
-Stage 1 implements the ACP stdio transport and a truthful `initialize` response. In local development, the adapter can run as an ACP subprocess and complete the `initialize` smoke path over stdout JSON-RPC.
+Stage 1 implemented ACP stdio transport and truthful `initialize`; Stage 2 added the OMP JSONL RPC client and process lifecycle; Stage 3 now wires `session/new`, baseline text/resource-link `session/prompt`, message/thought streaming, and best-effort `session/cancel` through the OMP runtime adapter.
 
-It is still not a complete usable ACP agent: session creation, prompts, cancellation, MCP, filesystem and terminal delegation, image input, embedded context, and other runtime capabilities are not implemented or not declared.
+The adapter is still not a complete coding-agent bridge: tool calls, edit diffs, host tool bridging, session list/load/resume/fork/close, MCP, filesystem and terminal delegation, image input, embedded context, slash commands, and usage updates remain unimplemented or unverified and are not declared as supported capabilities.
 
 Run the development subprocess entry point with:
 
@@ -32,15 +32,15 @@ Run the development subprocess entry point with:
 node --import tsx src/index.ts
 ```
 
-Run the targeted Stage 1 tests with:
+Run targeted Stage 3 checks with:
 
 ```bash
-node --import tsx --test test/unit/acp/initialize.test.ts
-node --import tsx --test test/smoke/acp-stdio.test.ts
+node --import tsx --test test/unit/acp/session-handlers.test.ts test/unit/session/manager.test.ts test/unit/translate/prompt.test.ts test/unit/translate/events-message.test.ts
+node --import tsx --test test/smoke/session-prompt.test.ts test/smoke/acp-stdio.test.ts
 ```
 
 Do not use npm or npx installation commands for this package yet. The package remains `private` and has not been published.
 
 ## Current status
 
-This repository is in active development and is not ready for publication. Zed smoke coverage and user-facing configuration documentation will be added in later stages after real session and prompt support exist.
+This repository is in active development and is not ready for publication. Zed/user-facing configuration documentation should wait until tool/edit and permission behavior are implemented and verified.

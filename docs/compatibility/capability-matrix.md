@@ -16,17 +16,17 @@
 | 能力 | 当前状态 | 声明策略 | 验证要求 |
 |---|---|---|---|
 | ACP stdio transport | 已实现 | 内部可用；发布仍需后续阶段 | `test/smoke/acp-stdio.test.ts` |
-| `initialize` | 已实现 | 只声明 conservative false capabilities；不声明额外能力 | `test/unit/acp/initialize.test.ts` + `test/smoke/acp-stdio.test.ts` |
-| `session/new` | 未实现 | 不声明 | session smoke test |
-| `session/prompt` text | 未实现 | 不声明 | prompt contract test |
-| `session/cancel` | 未实现 | 不声明 | cancel race test |
+| `initialize` | 已实现 | 声明已实现的 baseline session/new + text/resource_link prompt；optional `promptCapabilities.image/audio/embeddedContext` 仍为 `false`，`loadSession`/MCP/session lifecycle 仍不声明或为 `false` | `test/unit/acp/initialize.test.ts` + smoke tests |
+| `session/new` | 已实现 | baseline ACP method 可用；不声明 session list/load/resume/fork/close | `test/smoke/session-prompt.test.ts` |
+| `session/prompt` text/resource_link | 已实现 | baseline text 与 resource_link 可用；image/audio/embedded context 不声明 | `test/unit/translate/prompt.test.ts` + `test/smoke/session-prompt.test.ts` |
+| `session/cancel` | 已实现 | baseline ACP notification 可用；best-effort 传递 runtime cancel 并本地抑制 late chunks | `test/unit/acp/session-handlers.test.ts` + `test/smoke/session-prompt.test.ts` |
 | `session/list` | 未实现 | 不声明 | OMP session fixture test |
 | `session/load` | 未实现 | 不声明 | OMP session fixture test |
 | `session/close` | 未实现 | 不声明 | lifecycle contract test |
 | `session/fork` | 未实现 | 不声明 | lifecycle contract test |
 | `session/resume` | 未实现 | 不声明 | lifecycle contract test |
-| `agent_message_chunk` | 未实现 | 不声明 | OMP event translation test |
-| `agent_thought_chunk` | 未实现 | 不声明 | OMP event translation test |
+| `agent_message_chunk` | 已实现 | runtime `message_update` 文本输出映射为 ACP message chunk | `test/unit/translate/events-message.test.ts` + `test/smoke/session-prompt.test.ts` |
+| `agent_thought_chunk` | 已实现 | runtime thought/reasoning 标记映射为 ACP thought chunk | `test/unit/translate/events-message.test.ts` + `test/smoke/session-prompt.test.ts` |
 | `tool_call` | 未实现 | 不声明 | tool event contract test |
 | `tool_call_update` | 未实现 | 不声明 | tool event contract test |
 | Structured edit diff | 未实现 | 不声明 | diff unit test + smoke edit |
