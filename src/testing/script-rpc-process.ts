@@ -14,6 +14,11 @@ function writeReady(): void {
 }
 
 function handleRequest(request: JsonObject): void {
+  if (scenario === "raw-frame-observer" && request.type === "host_tool_result") {
+    writeFrame({ type: "raw_frame_observed", frame: request });
+    return;
+  }
+
   handledRequests += 1;
 
   if (scenario === "malformed-on-request" && handledRequests === 1) {

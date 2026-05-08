@@ -36,6 +36,10 @@ class FakeRuntimeAdapter implements RuntimeAdapter {
     return undefined;
   }
 
+  send(_frame: Record<string, unknown>): Promise<void> {
+    return Promise.resolve(undefined);
+  }
+
   onEvent(listener: (event: RuntimeEvent) => void): () => void {
     this.listeners.push(listener);
     return () => {};

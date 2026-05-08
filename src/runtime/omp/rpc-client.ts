@@ -95,6 +95,22 @@ export class OmpRpcClient implements RuntimeAdapter {
     });
   }
 
+  send(frame: Record<string, unknown>): Promise<void> {
+    if (this.readyState !== "ready" || this.process.stdin.destroyed || this.process.stdin.writableEnded) {
+      return Promise.reject(new OmpRpcClientError("OMP RPC client not ready or closed"));
+    }
+
+    return new Promise<void>((resolve, reject) => {
+      this.process.stdin.write(`${JSON.stringify(frame)}\n`, (error) => {
+        if (error !== null && error !== undefined) {
+          reject(new OmpRpcClientError("Failed to write OMP RPC frame", { cause: error }));
+          return;
+        }
+        resolve();
+      });
+    });
+  }
+
   onEvent(listener: (event: RuntimeEvent) => void): () => void {
     this.eventListeners.add(listener);
     return () => {
@@ -110,10 +126,10 @@ export class OmpRpcClient implements RuntimeAdapter {
     const closeError = new OmpRpcClientError("OMP RPC client closed");
     this.rejectPending(closeError);
     if (this.readyState === "pending") {
-      this.readyState = "closed";
-      this.clearReadyTimeout();
       this.rejectReady(closeError);
     }
+    this.readyState = "closed";
+    this.clearReadyTimeout();
 
     this.closePromise = new Promise<void>((resolve) => {
       if (this.process.exitCode !== null || this.process.signalCode !== null) {
