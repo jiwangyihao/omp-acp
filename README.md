@@ -21,6 +21,9 @@ npm run check
 npm run build
 npm run smoke:acp
 npm run smoke:sdk-client
+npm run validate:registry
+npm run validate:acpx
+npm run validate:standard
 ```
 
 ### Stage 7 status
@@ -41,12 +44,17 @@ Run targeted Stage 6 checks with:
 node --import tsx --test test/unit/acp/initialize.test.ts test/unit/acp/session-resume.test.ts test/unit/translate/prompt.test.ts test/smoke/session-prompt.test.ts
 ```
 
-Run the build-output ACP smoke checks with both the raw JSON-RPC harness and the official TypeScript SDK client:
+Run build-output ACP compatibility checks with the raw JSON-RPC harness, the official TypeScript SDK client, the registry-style method probe, and the pinned `openclaw/acpx` draft assessment:
 
 ```bash
 npm run smoke:acp
 npm run smoke:sdk-client
+npm run validate:registry
+npm run validate:acpx
+npm run validate:standard
 ```
+
+`validate:standard` runs the automated gates above plus `npm run check`; it intentionally excludes Zed GUI smoke. The `openclaw/acpx` script reports the full draft profile result and treats only documented, capability-boundary mismatches as expected draft failures.
 
 Do not use npm or npx installation commands for this package yet. The package remains `private` and has not been published.
 

@@ -4,15 +4,15 @@
 
 ## 结论
 
-截至 2026-05-08，未发现 ACP 官方发布的稳定、完整 conformance test suite。当前可防御的验证应分层执行：
+截至 2026-05-08，未发现 ACP 官方发布的稳定、完整 conformance test suite。当前可防御的验证分层如下：
 
-1. **官方 TypeScript SDK client smoke**：使用 `@agentclientprotocol/sdk` 的 `ClientSideConnection` 驱动本地 adapter，降低手写 JSON-RPC 客户端造成的理解偏差。
-2. **raw JSON-RPC stdio smoke**：继续验证 stdout 纯净性、构建产物入口、低层 JSON-RPC 行为和错误处理。
-3. **ACP Registry / Protocol Matrix 参考**：作为官方生态的 registry eligibility 与 capability discovery 参考，但它不是完整行为 conformance。
-4. **`openclaw/acpx` draft conformance**：作为第三方草案压力测试候选，不能当作 ACP 官方发布门禁。
-5. **Zed GUI smoke**：验证真实客户端 UI 集成，不替代协议正确性验证。
+1. **官方 TypeScript SDK client smoke**：`npm run smoke:sdk-client` 使用 `@agentclientprotocol/sdk` 的 `ClientSideConnection` 驱动本地 adapter，降低手写 JSON-RPC 客户端造成的理解偏差。
+2. **raw JSON-RPC stdio smoke**：`npm run smoke:acp` 继续验证 stdout 纯净性、构建产物入口、低层 JSON-RPC 行为和错误处理。
+3. **ACP Registry / Protocol Matrix 风格探测**：`npm run validate:registry` 复刻 registry matrix 的 capability discovery 与方法探测思路；它是官方生态参考，不是完整行为 conformance。
+4. **`openclaw/acpx` draft conformance 评估**：`npm run validate:acpx` 运行固定 commit 的第三方草案 profile，并把与当前能力矩阵不适用或草案差异明确列为 expected draft failures；不能当作 ACP 官方发布门禁。
+5. **Zed GUI smoke**：验证真实客户端 UI 集成，不替代协议正确性验证。本轮“除 Zed 外”的自动化验证不包含该项。
 
-## 本仓库自动化门禁
+## 本仓库自动化门禁与探测
 
 ### `npm run smoke:sdk-client`
 
@@ -37,6 +37,19 @@
 - adapter 进程 stderr 是否保持为空。
 
 两类 smoke 互补：SDK smoke 降低协议理解偏差，raw smoke 保留低层传输和 stdout 污染检测。
+
+### `npm run validate:registry`
+
+该脚本先构建 `dist/index.js`，再使用 raw JSON-RPC/NDJSON harness 按 ACP Registry Protocol Matrix 的风格执行：
+
+- `initialize` 使用 registry matrix 风格的 `clientInfo`、terminal 与 fs capability 参数；
+- 校验当前 truthful capability signal：`loadSession:true`、`sessionCapabilities.list:{}`、`sessionCapabilities.resume:{}`，并确认 fork/stop/set_model 未声明；
+- `session/new` 基础创建通过；
+- `session/list` 与一个预置 OMP JSONL session 的 `session/resume` probe 通过；
+- `session/fork`、`session/stop`、`session/set_model` 返回 `method_not_found`，与未声明能力一致；
+- stdout 逐行校验为 JSON-RPC frame，避免 adapter stdout 污染。
+
+这不是直接运行 `agentclientprotocol/registry` CI；当前包仍为 `private`，没有 registry manifest，也没有实现 ACP auth flow。它用于在本地覆盖 registry matrix 最关键的 capability discovery 与 unsupported-method 边界。
 
 ## ACP Registry / Protocol Matrix
 
@@ -66,6 +79,22 @@ Registry 的 auth checker 还会检查 `authMethods`，并明确要求 agent 不
 - adapter 未声明的能力不能因为 draft profile 要求而被临时伪造；
 - permission 相关 case 在当前阶段应标记为 unsupported 或 expected non-applicable；
 - 失败结论必须按 case 与当前 capability matrix 逐项解释。
+
+当前已通过 `npm run validate:acpx` 执行固定版本：
+
+- `openclaw/acpx` commit：`d46e1561020aafb4b88c4bad314fe4c883829a5a`；
+- profile：`acp-core-v1`；
+- 结果：21 个 case，11 个通过，10 个 expected draft failures，未出现 unexpected failure。
+
+expected draft failures 的边界如下：
+
+- cancellation/background 类 case 依赖 acpx mock-agent 对 `sleep 5000` 的长运行语义；当前 adapter 使用 deterministic fixture runtime，无法用该 fixture 证明 in-flight cancel；
+- permission read/write 类 case 依赖 ACP client-authority permission flow；当前 adapter 不声明、不实现该能力；
+- structured blocks case 期望 agent update 中回显原始 ACP resource block JSON；当前 adapter 的已声明 embedded context 语义是把 embedded text/blob resource 转为稳定 OMP prompt text sections；
+- unknown-session case 的 draft 期望错误码只包含 `-32603`/`-32000`；adapter 现在返回 SDK `resourceNotFound`（`-32002`），这比此前的 internal error 更明确，但仍与该第三方草案 case 的 code allowlist 不一致；
+- mock-agent 文本类 case（例如 unknown command、late tool update）验证的是 acpx 自带 mock-agent 行为，不是当前 OMP fixture runtime 的承诺。
+
+本次验证中发现并修复了一个真实错误语义问题：`session/prompt` 指向未知 session 时不再被 SDK 包装成 `Internal error`，而是返回显式 `Resource not found`。对应覆盖见 `test/smoke/session-prompt.test.ts`。
 
 ## Zed GUI smoke 的位置
 

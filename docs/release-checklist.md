@@ -6,10 +6,12 @@
 
 | 门禁 | 当前结果 | 证据 |
 |---|---|---|
-| `npm run check` | 通过 | `tests 114, pass 114, fail 0` |
+| `npm run check` | 通过 | `npm run validate:standard` 已执行并进入后续 smoke；新增未知 session 错误语义测试通过 |
 | `npm run build` | 通过 | `tsup src/index.ts --format esm --platform node --target node20 --clean` 生成 `dist/index.js` |
 | stdio smoke | 通过 | `npm run smoke:acp` 使用 build output 和 fixture runtime 完成 initialize/new/prompt |
 | official SDK client smoke | 通过 | `npm run smoke:sdk-client` 使用 `@agentclientprotocol/sdk` 的 `ClientSideConnection` 驱动 build output，覆盖 initialize/new/prompt/list/resume |
+| Registry-style probe | 通过 | `npm run validate:registry` 覆盖 initialize、capability signal、session/new、session/list、session/resume、unsupported method probe |
+| `openclaw/acpx` draft assessment | 通过（有 expected draft failures） | `npm run validate:acpx` 固定 `d46e156...`；21 case，11 pass，10 expected draft failures，0 unexpected |
 | 真实 `omp --mode rpc` ready smoke | 通过 | `omp --version` 输出 `omp/14.7.6`；`omp --mode rpc` 输出 ready frame |
 | Zed 手工 smoke | 未执行 | 已安装隔离用官方 Zed：`C:/Users/34404/AppData/Local/Programs/Zed/bin/zed.exe --version` 输出 `Zed 1.1.6 ...`；`zed` 仍未加入当前 PATH；GUI 手工步骤尚未执行 |
 
@@ -26,6 +28,9 @@
 - [ ] 运行 `npm run build`，确认 build output 可用。
 - [ ] 运行 `npm run smoke:acp`，确认 build output 的 ACP stdio smoke 通过。
 - [ ] 运行 `npm run smoke:sdk-client`，确认官方 TypeScript SDK client smoke 通过。
+- [ ] 运行 `npm run validate:registry`，确认 Registry-style capability discovery 与 unsupported-method 边界通过。
+- [ ] 运行 `npm run validate:acpx`，确认 acpx draft assessment 无 unexpected failure，并复核 expected draft failures 是否仍与能力矩阵一致。
+- [ ] 如需一次性执行除 Zed 外的自动化门禁，运行 `npm run validate:standard`。
 - [ ] 运行真实 `omp --mode rpc` ready smoke；如果本机不可用，记录版本、PATH 和失败原因。
 - [ ] 对照 `docs/compatibility/capability-matrix.md` 检查 `initialize` 输出。
 
