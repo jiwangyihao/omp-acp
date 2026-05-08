@@ -4,6 +4,7 @@ const scenario = process.argv[2] ?? "normal";
 let stdinBuffer = "";
 let handledRequests = 0;
 let pendingCancelPrompt: { id: unknown; params: unknown } | undefined;
+let pendingHostToolPrompt: { id: unknown; params: unknown } | undefined;
 
 function writeFrame(frame: JsonObject): void {
   process.stdout.write(`${JSON.stringify(frame)}\n`);
@@ -16,6 +17,15 @@ function writeReady(): void {
 function handleRequest(request: JsonObject): void {
   if (scenario === "raw-frame-observer" && request.type === "host_tool_result") {
     writeFrame({ type: "raw_frame_observed", frame: request });
+    return;
+  }
+
+  if (scenario === "session-host-tool-unregistered" && request.type === "host_tool_result") {
+    const pending = pendingHostToolPrompt;
+    pendingHostToolPrompt = undefined;
+    if (pending !== undefined) {
+      writeFrame({ type: "response", id: pending.id, result: { ok: true } });
+    }
     return;
   }
 
@@ -82,6 +92,26 @@ function handleRequest(request: JsonObject): void {
     if (scenario === "session-cwd") {
       writeFrame({ type: "message_update", content: process.cwd() });
       writeFrame({ type: "response", id, result: { ok: true } });
+      return;
+    }
+
+    if (scenario === "session-tool-events") {
+      writeFrame({ type: "tool_execution_start", toolCallId: "tool_smoke_1", name: "read_file", title: "Read config", status: "running", input: { path: "config.json" }, path: "config.json", line: 3 });
+      writeFrame({ type: "tool_execution_update", toolCallId: "tool_smoke_1", status: "running", content: "reading config", path: "config.json", line: 3 });
+      writeFrame({
+        type: "tool_execution_update",
+        toolCallId: "tool_smoke_1",
+        status: "running",
+        diff: { path: "config.json", oldText: "old", newText: "new" },
+      });
+      writeFrame({ type: "tool_execution_end", toolCallId: "tool_smoke_1", status: "completed", output: "done" });
+      writeFrame({ type: "response", id, result: { ok: true } });
+      return;
+    }
+
+    if (scenario === "session-host-tool-unregistered") {
+      pendingHostToolPrompt = { id, params: request.params };
+      writeFrame({ type: "host_tool_call", id: "host_smoke_1", toolCallId: "host_tool_smoke_1", toolName: "missing_tool", arguments: { value: 1 } });
       return;
     }
   }

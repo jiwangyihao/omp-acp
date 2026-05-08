@@ -272,6 +272,10 @@ function updateKind(message: JsonRpcObject): string | undefined {
   return (message.params as { update?: { sessionUpdate?: string } } | undefined)?.update?.sessionUpdate;
 }
 
+function sessionUpdate(message: JsonRpcObject): Record<string, unknown> | undefined {
+  return (message.params as { update?: Record<string, unknown> } | undefined)?.update;
+}
+
 test("session/prompt streams message and thought updates before returning", async () => {
   await withAcpSubprocess("session-happy", async (acp) => {
     const sessionId = await initializeAndCreateSession(acp, 1, 2);
@@ -376,6 +380,87 @@ test("session/cancel returns cancelled and suppresses late normal chunks", async
       acp.messages.some((message) => message.method === "session/update" && textFromUpdate(message) === "late message"),
       false,
     );
+  });
+});
+
+test("session/prompt forwards runtime tool execution updates before response", async () => {
+  await withAcpSubprocess("session-tool-events", async (acp) => {
+    const sessionId = await initializeAndCreateSession(acp, 20, 21);
+
+    acp.send({
+      jsonrpc: "2.0",
+      id: 22,
+      method: "session/prompt",
+      params: { sessionId, prompt: [{ type: "text", text: "use tool" }] },
+    });
+
+    const start = await acp.nextMessage();
+    const textUpdate = await acp.nextMessage();
+    const diffUpdate = await acp.nextMessage();
+    const endUpdate = await acp.nextMessage();
+    const response = await acp.nextMessage();
+
+    assert.equal(start.method, "session/update");
+    assert.deepEqual(sessionUpdate(start), {
+      sessionUpdate: "tool_call",
+      toolCallId: "tool_smoke_1",
+      title: "Read config",
+      kind: "read",
+      status: "in_progress",
+      rawInput: { path: "config.json" },
+      locations: [{ path: "config.json", line: 3 }],
+    });
+    assert.equal(updateKind(textUpdate), "tool_call_update");
+    assert.deepEqual(sessionUpdate(textUpdate)?.content, [{ type: "content", content: { type: "text", text: "reading config" } }]);
+    assert.equal(updateKind(diffUpdate), "tool_call_update");
+    assert.deepEqual(sessionUpdate(diffUpdate)?.content, [
+      { type: "diff", path: "config.json", oldText: "old", newText: "new" },
+    ]);
+    assert.deepEqual(sessionUpdate(endUpdate), {
+      sessionUpdate: "tool_call_update",
+      toolCallId: "tool_smoke_1",
+      status: "completed",
+      rawOutput: "done",
+      content: [{ type: "content", content: { type: "text", text: "done" } }],
+    });
+    assert.equal(response.id, 22);
+    assert.deepEqual(response.result, { stopReason: "end_turn" });
+    assert.equal(acp.stderr, "");
+  });
+});
+
+test("session/prompt sends raw host tool result for unregistered runtime host tool", async () => {
+  await withAcpSubprocess("session-host-tool-unregistered", async (acp) => {
+    const sessionId = await initializeAndCreateSession(acp, 23, 24);
+
+    acp.send({
+      jsonrpc: "2.0",
+      id: 25,
+      method: "session/prompt",
+      params: { sessionId, prompt: [{ type: "text", text: "host tool" }] },
+    });
+
+    const pending = await acp.nextMessage();
+    const failed = await acp.nextMessage();
+    const response = await acp.nextMessage();
+
+    assert.deepEqual(sessionUpdate(pending), {
+      sessionUpdate: "tool_call",
+      toolCallId: "host_tool_smoke_1",
+      title: "missing_tool",
+      kind: "other",
+      status: "pending",
+      rawInput: { value: 1 },
+    });
+    assert.deepEqual(sessionUpdate(failed), {
+      sessionUpdate: "tool_call_update",
+      toolCallId: "host_tool_smoke_1",
+      status: "failed",
+      rawOutput: { error: "Unsupported host tool: missing_tool" },
+    });
+    assert.equal(response.id, 25);
+    assert.deepEqual(response.result, { stopReason: "end_turn" });
+    assert.equal(acp.stderr, "");
   });
 });
 

@@ -7,6 +7,7 @@ import { handleSessionPrompt } from "../../../src/acp/handlers/session-prompt.ts
 import type { RuntimeAdapter, RuntimeDiagnostics } from "../../../src/runtime/RuntimeAdapter.ts";
 import type { RuntimeEvent } from "../../../src/runtime/RuntimeEvents.ts";
 import { SessionManager, type RuntimeFactoryInput } from "../../../src/session/manager.ts";
+import type { HostToolExecutor } from "../../../src/runtime/omp/host-tools.ts";
 
 class Deferred<T> {
   promise: Promise<T>;
@@ -28,6 +29,8 @@ class FakeRuntimeAdapter implements RuntimeAdapter {
   readonly listeners = new Set<(event: RuntimeEvent) => void>();
   readonly promptDeferreds: Array<Deferred<unknown>> = [];
   closeCalls = 0;
+  readonly sentFrames: Record<string, unknown>[] = [];
+  nextSendError: Error | undefined;
 
   request(method: string, params?: unknown): Promise<unknown> {
     this.requests.push({ method, params });
@@ -39,7 +42,13 @@ class FakeRuntimeAdapter implements RuntimeAdapter {
     return Promise.resolve(undefined);
   }
 
-  send(_frame: Record<string, unknown>): Promise<void> {
+  send(frame: Record<string, unknown>): Promise<void> {
+    this.sentFrames.push(frame);
+    if (this.nextSendError !== undefined) {
+      const error = this.nextSendError;
+      this.nextSendError = undefined;
+      return Promise.reject(error);
+    }
     return Promise.resolve(undefined);
   }
 
@@ -328,6 +337,129 @@ test("event translation failure stops accepting same-turn assistant updates", as
   assert.deepEqual(connection.updates, []);
 });
 
+
+test("unregistered host tool call emits ACP failure and raw error result before prompt returns", async () => {
+  const { manager, connection, runtime } = await createSession();
+
+  const promptPromise = handleSessionPrompt(promptRequest(), { manager, connection });
+  let settled = false;
+  promptPromise.then(() => {
+    settled = true;
+  });
+
+  runtime.emit({
+    type: "event",
+    eventType: "host_tool_call",
+    raw: { type: "host_tool_call", id: "host_1", toolCallId: "tc_1", toolName: "missing", arguments: { value: 1 } },
+  });
+  await waitForCondition(() => connection.updates.length === 1);
+  runtime.promptDeferreds[0]!.resolve({});
+  await new Promise<void>((resolve) => setImmediate(resolve));
+
+  assert.equal(settled, false);
+  assert.deepEqual(connection.updates[0], {
+    sessionId: "session-1",
+    update: { sessionUpdate: "tool_call", toolCallId: "tc_1", title: "missing", kind: "other", status: "pending", rawInput: { value: 1 } },
+  });
+
+  connection.updateDeferreds[0]!.resolve();
+  await waitForCondition(() => connection.updates.length === 2);
+  assert.equal(settled, false);
+  assert.deepEqual(connection.updates[1], {
+    sessionId: "session-1",
+    update: { sessionUpdate: "tool_call_update", toolCallId: "tc_1", status: "failed", rawOutput: { error: "Unsupported host tool: missing" } },
+  });
+
+  connection.updateDeferreds[1]!.resolve();
+  assert.deepEqual(await promptPromise, { stopReason: "end_turn" });
+  assert.deepEqual(runtime.sentFrames, [
+    {
+      type: "host_tool_result",
+      id: "host_1",
+      isError: true,
+      result: { content: [{ type: "text", text: "Unsupported host tool: missing" }] },
+    },
+  ]);
+});
+
+test("registered host tool call uses registry and sends raw success result", async () => {
+  const { manager, connection, runtime } = await createSession();
+  const calls: Array<{ input: unknown; aborted: boolean }> = [];
+  const registry: Record<string, HostToolExecutor> = {
+    lookup: ({ arguments: input, signal }) => {
+      calls.push({ input, aborted: signal.aborted });
+      assert.equal(signal instanceof AbortSignal, true);
+      return { ok: true, input };
+    },
+  };
+
+  const context = { manager, connection, hostToolRegistry: registry };
+  const promptPromise = handleSessionPrompt(promptRequest(), context);
+
+  runtime.emit({
+    type: "event",
+    eventType: "host_tool_call",
+    raw: { type: "host_tool_call", id: "host_2", toolCallId: "tc_2", toolName: "lookup", arguments: { query: "abc" } },
+  });
+
+  await waitForCondition(() => connection.updates.length === 1);
+  connection.updateDeferreds[0]!.resolve();
+  await waitForCondition(() => connection.updates.length === 2);
+  runtime.promptDeferreds[0]!.resolve({});
+  await new Promise<void>((resolve) => setImmediate(resolve));
+
+  connection.updateDeferreds[1]!.resolve();
+  assert.deepEqual(await promptPromise, { stopReason: "end_turn" });
+  assert.deepEqual(calls, [{ input: { query: "abc" }, aborted: false }]);
+  assert.deepEqual(
+    connection.updates.map((entry) => entry.update),
+    [
+      { sessionUpdate: "tool_call", toolCallId: "tc_2", title: "lookup", kind: "other", status: "pending", rawInput: { query: "abc" } },
+      { sessionUpdate: "tool_call_update", toolCallId: "tc_2", status: "completed", rawOutput: { ok: true, input: { query: "abc" } } },
+    ],
+  );
+  assert.deepEqual(runtime.sentFrames, [{ type: "host_tool_result", id: "host_2", result: { ok: true, input: { query: "abc" } } }]);
+});
+
+test("host tool raw frame send failure rejects prompt", async () => {
+  const { manager, connection, runtime } = await createSession();
+  runtime.nextSendError = new Error("stdin closed");
+
+  const promptPromise = handleSessionPrompt(promptRequest(), { manager, connection });
+  const expectedRejection = assert.rejects(promptPromise, /stdin closed/);
+  runtime.emit({
+    type: "event",
+    eventType: "host_tool_call",
+    raw: { type: "host_tool_call", id: "host_3", toolName: "missing" },
+  });
+
+  await waitForCondition(() => connection.updates.length === 2);
+  connection.resolveAllUpdates();
+  runtime.promptDeferreds[0]!.resolve({});
+
+  await expectedRejection;
+  assert.equal(runtime.listeners.size, 0);
+});
+
+test("late host tool events after cancel are suppressed", async () => {
+  const { manager, connection, runtime } = await createSession();
+
+  const promptPromise = handleSessionPrompt(promptRequest(), { manager, connection });
+  await handleSessionCancel({ sessionId: "session-1" }, manager);
+  assert.deepEqual(await promptPromise, { stopReason: "cancelled" });
+
+  runtime.emit({
+    type: "event",
+    eventType: "host_tool_call",
+    raw: { type: "host_tool_call", id: "host_4", toolName: "missing" },
+  });
+  runtime.emit({ type: "event", eventType: "host_tool_cancel", raw: { type: "host_tool_cancel", targetId: "host_4" } });
+  runtime.promptDeferreds[0]!.resolve({});
+  await waitForCondition(() => runtime.listeners.size === 0);
+
+  assert.deepEqual(connection.updates, []);
+  assert.deepEqual(runtime.sentFrames, []);
+});
 test("concurrent prompt rejects", async () => {
   const { manager, connection, runtime } = await createSession();
 

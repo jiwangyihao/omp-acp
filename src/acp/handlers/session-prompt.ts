@@ -1,6 +1,7 @@
 import type { PromptRequest, PromptResponse, SessionUpdate } from "@agentclientprotocol/sdk";
 import type { RuntimeEvent } from "../../runtime/RuntimeEvents.ts";
 import type { SessionManager } from "../../session/manager.ts";
+import { HostToolBridge, type HostToolExecutor } from "../../runtime/omp/host-tools.ts";
 import { translateRuntimeEventToSessionUpdate } from "../../translate/events.ts";
 import { translatePromptToOmpRequest } from "../../translate/prompt.ts";
 
@@ -12,6 +13,7 @@ export type SessionPromptHandlerContext = {
   manager: SessionManager;
   connection: SessionPromptConnection;
   cancelledPromptCleanupTimeoutMs?: number;
+  hostToolRegistry?: Record<string, HostToolExecutor>;
 };
 
 
@@ -19,7 +21,7 @@ const CANCELLED_PROMPT_CLEANUP_TIMEOUT_MS = 30_000;
 
 export async function handleSessionPrompt(
   params: PromptRequest,
-  { manager, connection, cancelledPromptCleanupTimeoutMs = CANCELLED_PROMPT_CLEANUP_TIMEOUT_MS }: SessionPromptHandlerContext,
+  { manager, connection, hostToolRegistry = {}, cancelledPromptCleanupTimeoutMs = CANCELLED_PROMPT_CLEANUP_TIMEOUT_MS }: SessionPromptHandlerContext,
 ): Promise<PromptResponse> {
   const { session, cancellation, finish } = manager.beginPrompt(params.sessionId);
   const updatePromises: Promise<void>[] = [];
@@ -28,9 +30,45 @@ export async function handleSessionPrompt(
   const eventFailure = new Promise<never>((_, reject) => {
     failPrompt = reject;
   });
+  const rejectActivePrompt = (error: unknown) => {
+    if (!cancellation.isCancelled && acceptingEvents) {
+      acceptingEvents = false;
+      failPrompt(error);
+    }
+  };
+  const emitUpdate = (update: SessionUpdate): Promise<void> => {
+    if (cancellation.isCancelled || !acceptingEvents) {
+      return Promise.resolve();
+    }
+    const delivery = connection.sessionUpdate({ sessionId: params.sessionId, update });
+    updatePromises.push(delivery);
+    delivery.catch(rejectActivePrompt);
+    return delivery;
+  };
+  const bridge = new HostToolBridge({
+    registry: hostToolRegistry,
+    sendFrame: (frame) => {
+      if (cancellation.isCancelled) {
+        return Promise.resolve();
+      }
+      return session.runtime.send(frame);
+    },
+    emitUpdate: (update) => {
+      emitUpdate(update);
+      return Promise.resolve();
+    },
+    failPrompt: rejectActivePrompt,
+  });
 
   const unsubscribe = session.runtime.onEvent((event: RuntimeEvent) => {
     if (cancellation.isCancelled || !acceptingEvents) {
+      return;
+    }
+
+    if (event.eventType === "host_tool_call" || event.eventType === "host_tool_cancel") {
+      const handled = bridge.handle(event.raw);
+      updatePromises.push(handled);
+      handled.catch(rejectActivePrompt);
       return;
     }
 
@@ -38,20 +76,12 @@ export async function handleSessionPrompt(
     try {
       update = translateRuntimeEventToSessionUpdate(event);
     } catch (error) {
-      acceptingEvents = false;
-      failPrompt(error);
+      rejectActivePrompt(error);
       return;
     }
 
     if (update !== undefined) {
-      const delivery = connection.sessionUpdate({ sessionId: params.sessionId, update });
-      updatePromises.push(delivery);
-      delivery.catch((error) => {
-        if (!cancellation.isCancelled && acceptingEvents) {
-          acceptingEvents = false;
-          failPrompt(error);
-        }
-      });
+      emitUpdate(update);
     }
   });
 

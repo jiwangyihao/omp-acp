@@ -14,22 +14,24 @@ import { SessionManager, type RuntimeFactory } from "../session/manager.ts";
 import { handleSessionCancel } from "./handlers/session-cancel.ts";
 import { handleSessionNew } from "./handlers/session-new.ts";
 import { handleSessionPrompt } from "./handlers/session-prompt.ts";
+import type { HostToolExecutor } from "../runtime/omp/host-tools.ts";
 
 export interface StartAcpServerOptions {
   stream: Stream;
   runtimeFactory?: RuntimeFactory;
+  hostToolRegistry?: Record<string, HostToolExecutor>;
 }
 
 export function startAcpServer(options: StartAcpServerOptions): AgentSideConnection {
   const manager = new SessionManager({
     runtimeFactory: options.runtimeFactory ?? ((input) => startOmpRpcClient({ cwd: input.cwd })),
   });
-  const connection = new AgentSideConnection((conn) => createOmpAcpAgent(conn, manager), options.stream);
+  const connection = new AgentSideConnection((conn) => createOmpAcpAgent(conn, manager, options.hostToolRegistry), options.stream);
   connection.closed.then(() => manager.closeAll()).catch(() => {});
   return connection;
 }
 
-export function createOmpAcpAgent(connection: AgentSideConnection, manager: SessionManager): Agent {
+export function createOmpAcpAgent(connection: AgentSideConnection, manager: SessionManager, hostToolRegistry: Record<string, HostToolExecutor> = {}): Agent {
   return {
     async initialize(params) {
       return handleInitialize(params);
@@ -44,7 +46,7 @@ export function createOmpAcpAgent(connection: AgentSideConnection, manager: Sess
     },
 
     async prompt(params: PromptRequest) {
-      return handleSessionPrompt(params, { manager, connection });
+      return handleSessionPrompt(params, { manager, connection, hostToolRegistry });
     },
 
     async cancel(params: CancelNotification) {
