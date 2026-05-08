@@ -305,6 +305,25 @@ async function writeSmokeSession(agentDir: string, cwd: string, sessionId: strin
   return path;
 }
 
+serialSmokeTest("session/prompt unknown session returns explicit not-found error", async () => {
+  await withAcpSubprocess("session-happy", async (acp) => {
+    acp.send(initializeRequest(34));
+    await acp.nextResponse(34);
+
+    acp.send({
+      jsonrpc: "2.0",
+      id: 35,
+      method: "session/prompt",
+      params: { sessionId: "session-does-not-exist", prompt: [{ type: "text", text: "hello" }] },
+    });
+    const promptResponse = await acp.nextResponse(35);
+
+    assert.equal(promptResponse.result, undefined);
+    assert.equal(promptResponse.error?.code, -32002);
+    assert.match(promptResponse.error?.message ?? "", /not found/i);
+  });
+});
+
 serialSmokeTest("session/list and session/load use OMP agent dir and keep stdout JSON-RPC only", async () => {
   const agentDir = await mkdtemp(join(tmpdir(), "omp-acp-smoke-agent-"));
   const cwd = repoRoot;

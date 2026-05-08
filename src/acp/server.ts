@@ -13,7 +13,7 @@ import {
 } from "@agentclientprotocol/sdk";
 import { handleInitialize } from "./handlers/initialize.ts";
 import { startOmpRpcClient } from "../runtime/omp/rpc-client.ts";
-import { SessionManager, type RuntimeFactory } from "../session/manager.ts";
+import { SessionManager, SessionManagerError, type RuntimeFactory } from "../session/manager.ts";
 import { handleSessionCancel } from "./handlers/session-cancel.ts";
 import { handleSessionList } from "./handlers/session-list.ts";
 import { handleSessionLoad } from "./handlers/session-load.ts";
@@ -72,11 +72,22 @@ export function createOmpAcpAgent(
     },
 
     async prompt(params: PromptRequest) {
-      return handleSessionPrompt(params, { manager, connection, hostToolRegistry });
+      try {
+        return await handleSessionPrompt(params, { manager, connection, hostToolRegistry });
+      } catch (error) {
+        throw normalizeSessionManagerError(error);
+      }
     },
 
     async cancel(params: CancelNotification) {
       return handleSessionCancel(params, manager);
     }
   };
+}
+
+function normalizeSessionManagerError(error: unknown): Error {
+  if (error instanceof SessionManagerError && error.message.startsWith("Unknown session:")) {
+    return RequestError.resourceNotFound(error.message);
+  }
+  return error instanceof Error ? error : new Error(String(error));
 }
