@@ -36,16 +36,52 @@ try {
   const sessionNew = await acp.nextResponse(2);
   assert.equal(sessionNew.error, undefined);
   assert.equal(typeof sessionNew.result?.sessionId, "string");
+  assertSetupState(sessionNew.result);
+  const sessionId = sessionNew.result.sessionId;
+
+  acp.send({
+    jsonrpc: "2.0",
+    id: 30,
+    method: "session/set_model",
+    params: { sessionId, modelId: "fixture/model-2" },
+  });
+  const setModel = await acp.nextResponse(30);
+  assertSuccessEmptyResult(setModel);
+  assertConfigOptionUpdate(await acp.nextMessage(), sessionId, "model", "fixture/model-2");
+  await promptAndAssert(acp, 31, sessionId, "after model");
+
+  acp.send({
+    jsonrpc: "2.0",
+    id: 32,
+    method: "session/set_config_option",
+    params: { sessionId, configId: "thinking", value: "low" },
+  });
+  const setConfigOption = await acp.nextResponse(32);
+  assert.equal(setConfigOption.error, undefined);
+  assertConfigOptionValue(setConfigOption.result?.configOptions, "thinking", "low");
+  assertConfigOptionUpdate(await acp.nextMessage(), sessionId, "thinking", "low");
+  await promptAndAssert(acp, 33, sessionId, "after thinking");
+
+  acp.send({
+    jsonrpc: "2.0",
+    id: 34,
+    method: "session/set_mode",
+    params: { sessionId, modeId: "default" },
+  });
+  const setMode = await acp.nextResponse(34);
+  assertSuccessEmptyResult(setMode);
+  assertCurrentModeUpdate(await acp.nextMessage(), sessionId, "default");
+  await promptAndAssert(acp, 35, sessionId, "after mode");
 
   acp.send({
     jsonrpc: "2.0",
     id: 3,
     method: "session/prompt",
-    params: { sessionId: sessionNew.result.sessionId, prompt: [{ type: "text", text: "smoke" }] },
+    params: { sessionId, prompt: [{ type: "text", text: "smoke" }] },
   });
   const update = await acp.nextMessage();
   assert.equal(update.method, "session/update");
-  assert.equal(update.params?.sessionId, sessionNew.result.sessionId);
+  assert.equal(update.params?.sessionId, sessionId);
   assert.equal(update.params?.update?.sessionUpdate, "agent_message_chunk");
   assert.equal(update.params?.update?.content?.text, "smoke");
 
@@ -55,7 +91,7 @@ try {
 
   const thoughtUpdate = await acp.nextMessage();
   assert.equal(thoughtUpdate.method, "session/update");
-  assert.equal(thoughtUpdate.params?.sessionId, sessionNew.result.sessionId);
+  assert.equal(thoughtUpdate.params?.sessionId, sessionId);
   assert.equal(thoughtUpdate.params?.update?.sessionUpdate, "agent_thought_chunk");
 
   const sourceSessionId = "raw-fork-source";
@@ -91,10 +127,81 @@ try {
 
   await acp.close();
   assert.equal(acp.stderr, "");
-  console.log(`ACP smoke passed using ${adapterEntry}`);
+  console.log(JSON.stringify({
+    status: "success",
+    adapterEntry,
+    sessionConfigOptions: "success",
+    sessionSetModel: "success",
+    sessionSetConfigOption: "success",
+    sessionSetMode: "success",
+  }));
 } finally {
   await acp.close().catch(() => {});
   await rm(agentDir, { recursive: true, force: true });
+}
+
+async function promptAndAssert(acp, id, sessionId, text) {
+  acp.send({
+    jsonrpc: "2.0",
+    id,
+    method: "session/prompt",
+    params: { sessionId, prompt: [{ type: "text", text }] },
+  });
+  const update = await acp.nextMessage();
+  assert.equal(update.method, "session/update");
+  assert.equal(update.params?.sessionId, sessionId);
+  assert.equal(update.params?.update?.sessionUpdate, "agent_message_chunk");
+  assert.equal(update.params?.update?.content?.text, text);
+
+  const prompt = await acp.nextResponse(id);
+  assert.equal(prompt.error, undefined);
+  assert.deepEqual(prompt.result, { stopReason: "end_turn" });
+
+  const thoughtUpdate = await acp.nextMessage();
+  assert.equal(thoughtUpdate.method, "session/update");
+  assert.equal(thoughtUpdate.params?.sessionId, sessionId);
+  assert.equal(thoughtUpdate.params?.update?.sessionUpdate, "agent_thought_chunk");
+}
+
+function assertSetupState(result) {
+  assert.equal(typeof result?.sessionId, "string");
+  assertPlainObject(result.models, "models");
+  assertPlainObject(result.modes, "modes");
+  assert.ok(Array.isArray(result.configOptions), "configOptions must be an array");
+  assertConfigOptionValue(result.configOptions, "model", "fixture/model");
+  assertConfigOptionValue(result.configOptions, "thinking", "low");
+}
+
+function assertPlainObject(value, label) {
+  assert.equal(typeof value, "object", `${label} must be an object`);
+  assert.notEqual(value, null, `${label} must not be null`);
+  assert.equal(Array.isArray(value), false, `${label} must not be an array`);
+}
+
+function assertSuccessEmptyResult(response) {
+  assert.equal(response.error, undefined);
+  assertPlainObject(response.result, "result");
+  assert.deepEqual(Object.keys(response.result), []);
+}
+
+function assertConfigOptionUpdate(message, sessionId, optionId, currentValue) {
+  assert.equal(message.method, "session/update");
+  assert.equal(message.params?.sessionId, sessionId);
+  assert.equal(message.params?.update?.sessionUpdate, "config_option_update");
+  assertConfigOptionValue(message.params?.update?.configOptions, optionId, currentValue);
+}
+
+function assertConfigOptionValue(configOptions, optionId, currentValue) {
+  assert.ok(Array.isArray(configOptions), "configOptions must be an array");
+  const option = configOptions.find((candidate) => candidate?.id === optionId);
+  assert.ok(option, `Missing config option ${optionId}`);
+  assert.equal(option.currentValue, currentValue);
+}
+
+function assertCurrentModeUpdate(message, sessionId, currentModeId) {
+  assert.equal(message.method, "session/update");
+  assert.equal(message.params?.sessionId, sessionId);
+  assert.deepEqual(message.params?.update, { sessionUpdate: "current_mode_update", currentModeId });
 }
 
 function startAcpSubprocess(agentDir) {

@@ -101,8 +101,8 @@ test("request serializes real OMP command frames without legacy method or params
       { method: "get_available_models", expected: { type: "get_available_models" } },
       {
         method: "set_model",
-        params: { provider: "p", modelId: "m" },
-        expected: { type: "set_model", provider: "p", modelId: "m" },
+        params: { provider: "fixture", modelId: "model-2" },
+        expected: { type: "set_model", provider: "fixture", modelId: "model-2" },
       },
       {
         method: "set_thinking_level",
@@ -111,13 +111,13 @@ test("request serializes real OMP command frames without legacy method or params
       },
       {
         method: "set_steering_mode",
-        params: { mode: "off" },
-        expected: { type: "set_steering_mode", mode: "off" },
+        params: { mode: "all" },
+        expected: { type: "set_steering_mode", mode: "all" },
       },
       {
         method: "set_follow_up_mode",
-        params: { mode: "auto" },
-        expected: { type: "set_follow_up_mode", mode: "auto" },
+        params: { mode: "one-at-a-time" },
+        expected: { type: "set_follow_up_mode", mode: "one-at-a-time" },
       },
       {
         method: "set_interrupt_mode",
@@ -181,13 +181,13 @@ test("concurrent requests resolve by exact response id when responses are out of
   await withClient("normal", async (client) => {
     await client.ready;
 
-    const slow = client.request("set_steering_mode", { mode: "slow" });
-    const fast = client.request("set_follow_up_mode", { mode: "fast" });
+    const slow = client.request("set_steering_mode", { mode: "all" });
+    const fast = client.request("set_follow_up_mode", { mode: "one-at-a-time" });
 
     const [slowResult, fastResult] = await Promise.all([slow, fast]);
 
-    assert.deepEqual(slowResult, { mode: "slow" });
-    assert.deepEqual(fastResult, { mode: "fast" });
+    assert.deepEqual(slowResult, { mode: "all" });
+    assert.deepEqual(fastResult, { mode: "one-at-a-time" });
   });
 });
 

@@ -18,6 +18,8 @@ const methodProbes = [
   "session/resume",
   "session/stop",
   "session/set_model",
+  "session/set_config_option",
+  "session/set_mode",
 ];
 
 const agentDir = await mkdtemp(resolve(tmpdir(), "omp-acp-registry-probe-agent-"));
@@ -47,6 +49,8 @@ try {
     sessionResume: true,
     sessionStop: false,
     setModel: false,
+    setConfigOption: false,
+    setMode: false,
   });
   assert.deepEqual(authTypes(initResult.authMethods), []);
 
@@ -54,35 +58,52 @@ try {
   assert.equal(sessionNew.outcome.status, "success");
   const sessionId = sessionNew.message.result.sessionId;
   assert.equal(typeof sessionId, "string");
+  assertSetupState(sessionNew.message.result, "session/new");
 
   const probes = {};
   for (const method of methodProbes) {
     probes[method] = await acp.request(method, probeParamsForMethod(method, sessionId, resumeSessionId));
+    if (method === "session/set_model") {
+      assert.equal(probes[method].outcome.status, "success");
+      assert.deepEqual(probes[method].message.result, {});
+      await promptAndAssertAgentUpdate(acp, sessionId, "registry after model", "set_model prompt");
+    }
+    if (method === "session/set_config_option") {
+      assert.equal(probes[method].outcome.status, "success");
+      assert.equal(Array.isArray(probes[method].message.result?.configOptions), true);
+      await promptAndAssertAgentUpdate(acp, sessionId, "registry after thinking", "set_config_option prompt");
+    }
+    if (method === "session/set_mode") {
+      assert.equal(probes[method].outcome.status, "success");
+      assert.deepEqual(probes[method].message.result, {});
+      await promptAndAssertAgentUpdate(acp, sessionId, "registry after mode", "set_mode prompt");
+    }
   }
 
   assert.equal(probes["session/list"].outcome.status, "success");
   assert.equal(probes["session/fork"].outcome.status, "success");
   assert.equal(typeof probes["session/fork"].message.result.sessionId, "string");
+  assertSetupState(probes["session/fork"].message.result, "session/fork");
   const forkedSessionId = probes["session/fork"].message.result.sessionId;
   assert.equal(typeof forkedSessionId, "string");
   assert.notEqual(forkedSessionId, resumeSessionId);
   assert.notEqual(forkedSessionId, sessionId);
 
-  const forkPrompt = await acp.request("session/prompt", {
+  const forkPrompt = await promptAndAssertAgentUpdate(acp, forkedSessionId, "registry fork prompt", "fork prompt");
+  const forkSetConfig = await acp.request("session/set_config_option", {
     sessionId: forkedSessionId,
-    prompt: [{ type: "text", text: "registry fork prompt" }],
+    configId: "thinking",
+    value: "low",
   });
-  assert.equal(forkPrompt.outcome.status, "success");
-  assert.deepEqual(forkPrompt.message.result, { stopReason: "end_turn" });
-  const forkUpdate = await acp.waitForMessage("fork prompt update", (candidate) =>
-    candidate.method === "session/update" &&
-    candidate.params?.sessionId === forkedSessionId &&
-    candidate.params?.update?.sessionUpdate === "agent_message_chunk"
-  );
-  assert.equal(forkUpdate.params.update.content?.text, "registry fork prompt");
+  assert.equal(forkSetConfig.outcome.status, "success");
+  assert.equal(Array.isArray(forkSetConfig.message.result?.configOptions), true);
+  await promptAndAssertAgentUpdate(acp, forkedSessionId, "registry fork after thinking", "fork setter prompt");
   assert.equal(probes["session/resume"].outcome.status, "success");
+  assertSetupState(probes["session/resume"].message.result, "session/resume");
   assert.equal(probes["session/stop"].outcome.status, "method_not_found");
-  assert.equal(probes["session/set_model"].outcome.status, "method_not_found");
+  assert.equal(probes["session/set_model"].outcome.status, "success");
+  assert.equal(probes["session/set_config_option"].outcome.status, "success");
+  assert.equal(probes["session/set_mode"].outcome.status, "success");
 
   await acp.close();
 
@@ -93,6 +114,7 @@ try {
     capabilities,
     resumeSessionPath,
     forkPrompt: forkPrompt.outcome.status,
+    forkSetConfig: forkSetConfig.outcome.status,
     probes: Object.fromEntries(
       Object.entries(probes).map(([method, result]) => [method, result.outcome]),
     ),
@@ -294,6 +316,8 @@ function extractCapabilities(initializeResult) {
     sessionResume: capabilityPresent(sessionCapabilities.resume),
     sessionStop: capabilityPresent(sessionCapabilities.stop),
     setModel: capabilityPresent(sessionCapabilities.setModel),
+    setConfigOption: capabilityPresent(sessionCapabilities.setConfigOption),
+    setMode: capabilityPresent(sessionCapabilities.setMode),
   };
 }
 
@@ -317,10 +341,42 @@ function probeParamsForMethod(method, sessionId, resumeSessionId) {
     case "session/stop":
       return { sessionId };
     case "session/set_model":
-      return { sessionId, modelId: "registry-probe-model" };
+      return { sessionId, modelId: "fixture/model-2" };
+    case "session/set_config_option":
+      return { sessionId, configId: "thinking", value: "low" };
+    case "session/set_mode":
+      return { sessionId, modeId: "default" };
     default:
       throw new Error(`Unhandled method probe: ${method}`);
   }
+}
+
+async function promptAndAssertAgentUpdate(acp, sessionId, text, label) {
+  const prompt = await acp.request("session/prompt", {
+    sessionId,
+    prompt: [{ type: "text", text }],
+  });
+  assert.equal(prompt.outcome.status, "success");
+  assert.deepEqual(prompt.message.result, { stopReason: "end_turn" });
+  const update = await acp.waitForMessage(`${label} update`, (candidate) =>
+    candidate.method === "session/update" &&
+    candidate.params?.sessionId === sessionId &&
+    candidate.params?.update?.sessionUpdate === "agent_message_chunk"
+  );
+  assert.equal(update.params.update.content?.text, text);
+  return prompt;
+}
+
+function assertSetupState(result, label) {
+  assert.equal(typeof result?.models?.currentModelId, "string", `${label} models.currentModelId`);
+  assert.equal(Array.isArray(result?.models?.availableModels), true, `${label} models.availableModels`);
+  assert.equal(result.models.availableModels.length > 0, true, `${label} available models`);
+  assert.equal(typeof result?.modes?.currentModeId, "string", `${label} modes.currentModeId`);
+  assert.equal(Array.isArray(result?.modes?.availableModes), true, `${label} modes.availableModes`);
+  assert.equal(Array.isArray(result?.configOptions), true, `${label} configOptions`);
+  const configIds = new Set(result.configOptions.map((option) => option?.id));
+  assert.equal(configIds.has("model"), true, `${label} model config option`);
+  assert.equal(configIds.has("thinking"), true, `${label} thinking config option`);
 }
 
 async function writeProbeSession(baseAgentDir, cwd, sessionId) {

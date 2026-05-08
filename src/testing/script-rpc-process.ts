@@ -6,16 +6,19 @@ let handledRequests = 0;
 let pendingCancelPrompt: { id: unknown; params: unknown } | undefined;
 let pendingHostToolPrompt: { id: unknown; params: unknown } | undefined;
 
-const CONTROL_STATE = {
-  model: { provider: "fixture", id: "model", name: "Fixture Model" },
+const availableModels = [
+  { provider: "fixture", id: "model", name: "Fixture Model", thinking: { minLevel: "minimal", maxLevel: "high" } },
+  { provider: "fixture", id: "model-2", name: "Fixture Model 2", thinking: { minLevel: "minimal", maxLevel: "medium" } },
+];
+
+const controlState = {
+  model: { provider: "fixture", id: "model", name: "Fixture Model", thinking: { minLevel: "minimal", maxLevel: "high" } },
   thinkingLevel: "low",
   steeringMode: "all",
   followUpMode: "one-at-a-time",
   interruptMode: "immediate",
   autoCompactionEnabled: true,
 };
-
-const AVAILABLE_MODELS = [{ provider: "fixture", id: "model", name: "Fixture Model", thinking: { minLevel: "minimal", maxLevel: "high" } }];
 
 function writeFrame(frame: JsonObject): void {
   process.stdout.write(`${JSON.stringify(frame)}\n`);
@@ -72,12 +75,12 @@ function handleRequest(request: JsonObject): void {
     if (scenario === "event-before-response") {
       writeFrame({ type: "message_update", content: "hello" });
     }
-    writeSuccess(id, command, CONTROL_STATE);
+    writeSuccess(id, command, structuredClone(controlState));
     return;
   }
 
   if (command === "get_available_models") {
-    writeSuccess(id, command, AVAILABLE_MODELS);
+    writeSuccess(id, command, structuredClone(availableModels));
     return;
   }
 
@@ -91,26 +94,62 @@ function handleRequest(request: JsonObject): void {
       writeFailure(id, command, "fixture failure");
       return;
     }
-    writeSuccess(id, command, { provider: request.provider, modelId: request.modelId });
+    const model = availableModels.find((candidate) => candidate.provider === request.provider && candidate.id === request.modelId);
+    if (model === undefined) {
+      writeFailure(id, command, `fixture model not found: ${String(request.provider)}/${String(request.modelId)}`);
+      return;
+    }
+    controlState.model = structuredClone(model);
+    writeSuccess(id, command, structuredClone(model));
     return;
   }
 
   if (command === "set_thinking_level") {
+    if (typeof request.level !== "string") {
+      writeFailure(id, command, "missing thinking level");
+      return;
+    }
+    controlState.thinkingLevel = request.level;
     writeSuccess(id, command, { level: request.level });
     return;
   }
 
   if (command === "set_steering_mode") {
+    if (request.mode !== "all" && request.mode !== "one-at-a-time") {
+      writeFailure(id, command, "invalid steering mode");
+      return;
+    }
+    controlState.steeringMode = request.mode;
     setTimeout(() => writeSuccess(id, command, { mode: request.mode }), 50);
     return;
   }
 
-  if (command === "set_follow_up_mode" || command === "set_interrupt_mode") {
+  if (command === "set_follow_up_mode") {
+    if (request.mode !== "all" && request.mode !== "one-at-a-time") {
+      writeFailure(id, command, "invalid follow-up mode");
+      return;
+    }
+    controlState.followUpMode = request.mode;
+    writeSuccess(id, command, { mode: request.mode });
+    return;
+  }
+
+  if (command === "set_interrupt_mode") {
+    if (request.mode !== "immediate" && request.mode !== "wait") {
+      writeFailure(id, command, "invalid interrupt mode");
+      return;
+    }
+    controlState.interruptMode = request.mode;
     writeSuccess(id, command, { mode: request.mode });
     return;
   }
 
   if (command === "set_auto_compaction") {
+    if (typeof request.enabled !== "boolean") {
+      writeFailure(id, command, "invalid auto compaction value");
+      return;
+    }
+    controlState.autoCompactionEnabled = request.enabled;
     writeSuccess(id, command, { enabled: request.enabled });
     return;
   }

@@ -65,6 +65,7 @@ try {
   const fork = await acp.request("session/fork", () => acp.connection.unstable_forkSession({ sessionId: "sdk-smoke-session", cwd: repoRoot, mcpServers: [] }));
   assert.equal(typeof fork.sessionId, "string");
   assert.notEqual(fork.sessionId, "sdk-smoke-session");
+  assertSetupState(fork);
 
   const forkPrompt = await acp.request("session/prompt after fork", () => acp.connection.prompt({
     sessionId: fork.sessionId,
@@ -78,6 +79,32 @@ try {
 
   const session = await acp.request("session/new", () => acp.connection.newSession({ cwd: repoRoot, mcpServers: [] }));
   assert.equal(typeof session.sessionId, "string");
+  assertSetupState(session);
+
+  const setModel = await acp.request("session/set_model", () => acp.connection.unstable_setSessionModel({
+    sessionId: session.sessionId,
+    modelId: "fixture/model-2",
+  }));
+  assert.deepEqual(setModel, {});
+  assertSingleConfigOptionUpdate(updates.splice(0), session.sessionId, "model", "fixture/model-2");
+  await promptAndAssert(acp, updates, session.sessionId, "after sdk model");
+
+  const setConfigOption = await acp.request("session/set_config_option", () => acp.connection.setSessionConfigOption({
+    sessionId: session.sessionId,
+    configId: "thinking",
+    value: "low",
+  }));
+  assertConfigOptionValue(setConfigOption.configOptions, "thinking", "low");
+  assertSingleConfigOptionUpdate(updates.splice(0), session.sessionId, "thinking", "low");
+  await promptAndAssert(acp, updates, session.sessionId, "after sdk thinking");
+
+  const setMode = await acp.request("session/set_mode", () => acp.connection.setSessionMode({
+    sessionId: session.sessionId,
+    modeId: "default",
+  }));
+  assert.deepEqual(setMode, {});
+  assert.deepEqual(updates.splice(0), [expectedModeUpdate(session.sessionId, "default")]);
+  await promptAndAssert(acp, updates, session.sessionId, "after sdk mode");
 
   const prompt = await acp.request("session/prompt", () => acp.connection.prompt({
     sessionId: session.sessionId,
@@ -90,7 +117,8 @@ try {
     expectedTextUpdate(session.sessionId, "agent_thought_chunk", "thinking"),
   ]);
 
-  await acp.request("session/resume", () => acp.connection.resumeSession({ sessionId: "sdk-smoke-session", cwd: repoRoot, mcpServers: [] }));
+  const resumed = await acp.request("session/resume", () => acp.connection.resumeSession({ sessionId: "sdk-smoke-session", cwd: repoRoot, mcpServers: [] }));
+  assertSetupState(resumed);
   assert.deepEqual(updates.splice(0), []);
 
   const resumedPrompt = await acp.request("session/prompt after resume", () => acp.connection.prompt({
@@ -105,7 +133,7 @@ try {
 
   await acp.close();
   assert.equal(acp.stderr, "");
-  console.log(`ACP SDK client smoke passed using ${adapterEntry}`);
+  console.log(JSON.stringify({ status: "success", adapterEntry, sessionConfigOptions: "success", sessionSetModel: "success", sessionSetConfigOption: "success", sessionSetMode: "success" }));
 } finally {
   await acp.close().catch(() => {});
   await rm(agentDir, { recursive: true, force: true });
@@ -200,6 +228,54 @@ function expectedTextUpdate(sessionId, sessionUpdate, text) {
       sessionUpdate,
       content: { type: "text", text },
     },
+  };
+}
+
+async function promptAndAssert(acp, updates, sessionId, text) {
+  const prompt = await acp.request(`session/prompt ${text}`, () => acp.connection.prompt({
+    sessionId,
+    prompt: [{ type: "text", text }],
+  }));
+  assert.deepEqual(prompt, { stopReason: "end_turn" });
+  assert.deepEqual(updates.splice(0), [
+    expectedTextUpdate(sessionId, "agent_message_chunk", text),
+    expectedTextUpdate(sessionId, "agent_thought_chunk", "thinking"),
+  ]);
+}
+
+function assertSetupState(result) {
+  assertPlainObject(result.models, "models");
+  assertPlainObject(result.modes, "modes");
+  assert.ok(Array.isArray(result.configOptions), "configOptions must be an array");
+  assertConfigOptionValue(result.configOptions, "model", "fixture/model");
+  assertConfigOptionValue(result.configOptions, "thinking", "low");
+}
+
+function assertPlainObject(value, label) {
+  assert.equal(typeof value, "object", `${label} must be an object`);
+  assert.notEqual(value, null, `${label} must not be null`);
+  assert.equal(Array.isArray(value), false, `${label} must not be an array`);
+}
+
+function assertConfigOptionValue(configOptions, optionId, currentValue) {
+  assert.ok(Array.isArray(configOptions), "configOptions must be an array");
+  const option = configOptions.find((candidate) => candidate?.id === optionId);
+  assert.ok(option, `Missing config option ${optionId}`);
+  assert.equal(option.currentValue, currentValue);
+}
+
+function assertSingleConfigOptionUpdate(updateBatch, sessionId, optionId, currentValue) {
+  assert.equal(updateBatch.length, 1);
+  const [message] = updateBatch;
+  assert.equal(message.sessionId, sessionId);
+  assert.equal(message.update?.sessionUpdate, "config_option_update");
+  assertConfigOptionValue(message.update?.configOptions, optionId, currentValue);
+}
+
+function expectedModeUpdate(sessionId, currentModeId) {
+  return {
+    sessionId,
+    update: { sessionUpdate: "current_mode_update", currentModeId },
   };
 }
 

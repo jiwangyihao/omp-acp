@@ -290,9 +290,71 @@ function assertSessionSetupState(result: unknown): void {
   assert.notEqual(result, null);
   const setup = result as { models?: unknown; modes?: unknown; configOptions?: unknown };
   assert.equal(typeof setup.models, "object");
+  assert.notEqual(setup.models, null);
   assert.equal(typeof setup.modes, "object");
+  assert.notEqual(setup.modes, null);
   assert.ok(Array.isArray(setup.configOptions));
-  assert.ok(setup.configOptions.some((option: { id?: string }) => option.id === "model"));
+
+  const models = setup.models as { currentModelId?: unknown; availableModels?: unknown };
+  assert.equal(models.currentModelId, "fixture/model");
+  assert.ok(Array.isArray(models.availableModels));
+  assert.ok(models.availableModels.some((model: { modelId?: string }) => model.modelId === "fixture/model"));
+  assert.ok(models.availableModels.some((model: { modelId?: string }) => model.modelId === "fixture/model-2"));
+
+  const modes = setup.modes as { currentModeId?: unknown; availableModes?: unknown };
+  assert.equal(modes.currentModeId, "default");
+  assert.ok(Array.isArray(modes.availableModes));
+  assert.ok(modes.availableModes.some((mode: { id?: string }) => mode.id === "default"));
+
+  const modelOption = findConfigOption(setup.configOptions, "model");
+  assert.equal(modelOption.currentValue, "fixture/model");
+  assert.ok(Array.isArray(modelOption.options));
+  assert.ok(modelOption.options.some((option: { value?: string }) => option.value === "fixture/model-2"));
+
+  const thinkingOption = findConfigOption(setup.configOptions, "thinking");
+  assert.equal(thinkingOption.currentValue, "low");
+  assert.ok(Array.isArray(thinkingOption.options));
+  assert.ok(thinkingOption.options.some((option: { value?: string }) => option.value === "low"));
+}
+
+function findConfigOption(configOptions: unknown, id: string): Record<string, unknown> {
+  assert.ok(Array.isArray(configOptions));
+  const option = configOptions.find((candidate: { id?: string }) => candidate.id === id);
+  assert.ok(option, `missing config option ${id}`);
+  assert.equal(typeof option, "object");
+  assert.notEqual(option, null);
+  return option as Record<string, unknown>;
+}
+
+async function assertPromptProducesMessageAndThought(acp: RunningAcp, id: number, sessionId: string, text: string): Promise<void> {
+  acp.send({
+    jsonrpc: "2.0",
+    id,
+    method: "session/prompt",
+    params: { sessionId, prompt: [{ type: "text", text }] },
+  });
+
+  const messageUpdate = await acp.nextMessage();
+  const thoughtUpdate = await acp.nextMessage();
+  const promptResponse = await acp.nextMessage();
+
+  assert.equal(messageUpdate.method, "session/update");
+  assert.equal(updateKind(messageUpdate), "agent_message_chunk");
+  assert.equal(textFromUpdate(messageUpdate), text);
+  assert.equal(thoughtUpdate.method, "session/update");
+  assert.equal(updateKind(thoughtUpdate), "agent_thought_chunk");
+  assert.equal(textFromUpdate(thoughtUpdate), "thinking");
+  assert.equal(promptResponse.id, id);
+  assert.deepEqual(promptResponse.result, { stopReason: "end_turn" });
+}
+
+async function expectNextSessionUpdate(acp: RunningAcp, expectedKind: string): Promise<Record<string, unknown>> {
+  const updateMessage = await acp.nextMessage();
+  assert.equal(updateMessage.method, "session/update");
+  assert.equal(updateKind(updateMessage), expectedKind);
+  const update = sessionUpdate(updateMessage);
+  assert.ok(update);
+  return update;
 }
 
 function textFromUpdate(message: JsonRpcObject): string | undefined {
@@ -520,6 +582,64 @@ serialSmokeTest("session/prompt streams message and thought updates before retur
     assert.equal(promptResponse.id, 3);
     assert.deepEqual(promptResponse.result, { stopReason: "end_turn" });
     assert.equal(acp.stderr, "");
+  });
+});
+
+serialSmokeTest("session controls setters update setup state and preserve prompt", async () => {
+  await withAcpSubprocess("session-happy", async (acp) => {
+    const sessionId = await initializeAndCreateSession(acp, 70, 71);
+
+    acp.send({
+      jsonrpc: "2.0",
+      id: 72,
+      method: "session/set_model",
+      params: { sessionId, modelId: "fixture/model-2" },
+    });
+    const setModelResponse = await acp.nextResponse(72);
+    assert.equal(setModelResponse.error, undefined);
+    const modelUpdate = await expectNextSessionUpdate(acp, "config_option_update");
+    const modelOption = findConfigOption(modelUpdate.configOptions, "model");
+    assert.equal(modelOption.currentValue, "fixture/model-2");
+    await assertPromptProducesMessageAndThought(acp, 73, sessionId, "after model");
+
+    acp.send({
+      jsonrpc: "2.0",
+      id: 74,
+      method: "session/set_config_option",
+      params: { sessionId, configId: "thinking", value: "low" },
+    });
+    const setThinkingResponse = await acp.nextResponse(74);
+    assert.equal(setThinkingResponse.error, undefined);
+    const thinkingResponseOption = findConfigOption(
+      (setThinkingResponse.result as { configOptions?: unknown } | undefined)?.configOptions,
+      "thinking",
+    );
+    assert.equal(thinkingResponseOption.currentValue, "low");
+    const thinkingUpdate = await expectNextSessionUpdate(acp, "config_option_update");
+    const thinkingUpdateOption = findConfigOption(thinkingUpdate.configOptions, "thinking");
+    assert.equal(thinkingUpdateOption.currentValue, "low");
+    await assertPromptProducesMessageAndThought(acp, 75, sessionId, "after thinking");
+
+    acp.send({
+      jsonrpc: "2.0",
+      id: 76,
+      method: "session/set_mode",
+      params: { sessionId, modeId: "default" },
+    });
+    const setModeResponse = await acp.nextResponse(76);
+    assert.equal(setModeResponse.error, undefined);
+    const modeUpdate = await expectNextSessionUpdate(acp, "current_mode_update");
+    assert.equal(modeUpdate.currentModeId, "default");
+    await assertPromptProducesMessageAndThought(acp, 77, sessionId, "after mode");
+
+    acp.send({
+      jsonrpc: "2.0",
+      id: 78,
+      method: "session/set_mode",
+      params: { sessionId, modeId: "other" },
+    });
+    const invalidModeResponse = await acp.nextResponse(78);
+    assert.equal(invalidModeResponse.error?.code, -32602);
   });
 });
 
