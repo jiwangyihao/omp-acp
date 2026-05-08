@@ -3,14 +3,14 @@ import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import test from "node:test";
-import type { LoadSessionRequest, ListSessionsRequest, SessionUpdate } from "@agentclientprotocol/sdk";
+import type { Agent, LoadSessionRequest, ListSessionsRequest, SessionUpdate } from "@agentclientprotocol/sdk";
 import { createOmpAcpAgent } from "../../../src/acp/server.ts";
 import type { RuntimeAdapter } from "../../../src/runtime/RuntimeAdapter.ts";
 import { SessionManager, type RuntimeFactoryInput } from "../../../src/session/manager.ts";
 
 class FakeRuntime implements RuntimeAdapter {
   readonly ready = Promise.resolve();
-  readonly diagnostics = [];
+  readonly diagnostics = { stderr: "" };
   readonly requests: Array<{ method: string; params?: unknown }> = [];
   readonly sent: unknown[] = [];
   closed = false;
@@ -33,7 +33,7 @@ class FakeRuntime implements RuntimeAdapter {
   }
 }
 
-type TestAgent = ReturnType<typeof createOmpAcpAgent>;
+type TestAgent = Agent & Required<Pick<Agent, "loadSession" | "unstable_listSessions">>;
 
 async function makeAgent() {
   const agentDir = await mkdtemp(join(tmpdir(), "omp-acp-agent-"));

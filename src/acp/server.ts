@@ -31,7 +31,8 @@ export function startAcpServer(options: StartAcpServerOptions): AgentSideConnect
   const manager = new SessionManager({
     runtimeFactory: options.runtimeFactory ?? ((input) => startOmpRpcClient({ cwd: input.cwd })),
   });
-  const connection = new AgentSideConnection((conn) => createOmpAcpAgent(conn, manager, options.hostToolRegistry, { agentDir: options.agentDir }), options.stream);
+  const agentOptions = options.agentDir !== undefined ? { agentDir: options.agentDir } : {};
+  const connection = new AgentSideConnection((conn) => createOmpAcpAgent(conn, manager, options.hostToolRegistry, agentOptions), options.stream);
   connection.closed.then(() => manager.closeAll()).catch(() => {});
   return connection;
 }
@@ -42,6 +43,7 @@ export function createOmpAcpAgent(
   hostToolRegistry: Record<string, HostToolExecutor> = {},
   options: { agentDir?: string } = {},
 ): Agent {
+  const handlerOptions = options.agentDir !== undefined ? { agentDir: options.agentDir } : {};
   return {
     async initialize(params) {
       return handleInitialize(params);
@@ -52,11 +54,11 @@ export function createOmpAcpAgent(
     },
 
     async loadSession(params: LoadSessionRequest) {
-      return handleSessionLoad(params, manager, connection, { agentDir: options.agentDir });
+      return handleSessionLoad(params, manager, connection, handlerOptions);
     },
 
     async unstable_listSessions(params: ListSessionsRequest) {
-      return handleSessionList(params, { agentDir: options.agentDir });
+      return handleSessionList(params, handlerOptions);
     },
 
     async authenticate(_params: AuthenticateRequest) {
