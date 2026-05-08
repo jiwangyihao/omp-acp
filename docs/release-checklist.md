@@ -6,16 +6,16 @@
 
 | 门禁 | 当前结果 | 证据 |
 |---|---|---|
-| `npm run check` | 通过 | `npm run validate:standard` 已执行并进入后续 smoke；新增未知 session 错误语义测试通过 |
+| `npm run check` | 通过 | 163 tests pass；包含 `test/unit/acp/session-controls.test.ts`、`test/unit/acp/session-config.test.ts` 与 expanded smoke tests |
 | `npm run build` | 通过 | `tsup src/index.ts --format esm --platform node --target node20 --clean` 生成 `dist/index.js` |
-| stdio smoke | 通过 | `npm run smoke:acp` 使用 build output 和 fixture runtime 完成 initialize/new/prompt、`session/fork` 与 fork 后 prompt |
-| official SDK client smoke | 通过 | `npm run smoke:sdk-client` 使用 `@agentclientprotocol/sdk` 的 `ClientSideConnection` 驱动 build output，覆盖 initialize/new/prompt/list/resume/fork 与 fork 后 prompt |
-| Registry-style probe | 通过 | `npm run validate:registry` 覆盖 initialize、capability signal、session/new、session/list、session/resume、`session/fork` success、fork 后 prompt，以及 unsupported method probe |
+| stdio smoke | 通过 | `npm run smoke:acp` 使用 build output 和 fixture runtime 完成 initialize/new/prompt、`session/fork`、session controls 与 setter 后 prompt |
+| official SDK client smoke | 通过 | `npm run smoke:sdk-client` 使用 `@agentclientprotocol/sdk` 的 `ClientSideConnection` 驱动 build output，覆盖 initialize/new/prompt/list/resume/fork、setup state、session controls 与 setter 后 prompt |
+| real OMP RPC controls smoke | 通过 | `npm run smoke:omp-rpc-controls` 本机输出 `skipped:false`，验证真实 `get_state`、`get_available_models` 与 OMP controls setters 后 state 生效 |
+| Registry-style probe | 通过 | `npm run validate:registry` 覆盖 initialize、capability signal、session/new、session/list、session/resume、`session/fork`、session controls success、setter 后 prompt，以及 unsupported `session/stop` probe |
 | `openclaw/acpx` draft assessment | 通过（有 expected draft failures） | `npm run validate:acpx` 固定 `d46e156...`；21 case，11 pass，10 expected draft failures，0 unexpected；这不是 full pass |
-| 真实 `omp --mode rpc` ready smoke | 通过 | `omp --version` 输出 `omp/14.7.6`；`omp --mode rpc` 输出 ready frame |
 | Zed 手工 smoke | 未执行 | 已安装隔离用官方 Zed：`C:/Users/34404/AppData/Local/Programs/Zed/bin/zed.exe --version` 输出 `Zed 1.1.6 ...`；`zed` 仍未加入当前 PATH；GUI 手工步骤尚未执行 |
 
-本次任务 5 已运行 `npm run validate:standard`，除 Zed 外自动门禁通过；其中 `openclaw/acpx` 仅表示 0 unexpected failure，不表示官方完整 conformance 或 full pass。
+本次 Stage 8B 已运行除 Zed 外的自动门禁；其中 `openclaw/acpx` 仅表示 0 unexpected failure，不表示官方完整 conformance 或 full pass。Zed GUI 手工 smoke 仍是发布阻塞项。
 
 ## 必须保持的发布边界
 
@@ -30,10 +30,11 @@
 - [ ] 运行 `npm run build`，确认 build output 可用。
 - [ ] 运行 `npm run smoke:acp`，确认 build output 的 ACP stdio smoke 通过。
 - [ ] 运行 `npm run smoke:sdk-client`，确认官方 TypeScript SDK client smoke 通过。
-- [ ] 运行 `npm run validate:registry`，确认 Registry-style capability discovery 与 unsupported-method 边界通过。
+- [ ] 运行 `npm run smoke:omp-rpc-controls`，确认发布机器为非 skip success；若 skip，必须记录 `omp` 缺失原因且不得视为发布通过。
+- [ ] 运行 `npm run validate:registry`，确认 Registry-style capability discovery、session controls probes 与 unsupported-method 边界通过。
 - [ ] 运行 `npm run validate:acpx`，确认 acpx draft assessment 无 unexpected failure，并复核 expected draft failures 是否仍与能力矩阵一致。
 - [ ] 如需一次性执行除 Zed 外的自动化门禁，运行 `npm run validate:standard`。
-- [ ] 运行真实 `omp --mode rpc` ready smoke；如果本机不可用，记录版本、PATH 和失败原因。
+- [ ] 运行真实 `omp --mode rpc` controls smoke；如果本机不可用，记录版本、PATH 和失败原因。
 - [ ] 对照 `docs/compatibility/capability-matrix.md` 检查 `initialize` 输出。
 
 ## Zed 手工门禁
@@ -56,6 +57,10 @@
 - [ ] session list。
 - [ ] session load。
 - [ ] session resume。
+- [ ] 模型 picker 可见，且来自 `session/new` setup state。
+- [ ] thinking picker 随当前模型 metadata 动态裁剪；不支持 `xhigh` 的模型不得允许主动提交 `xhigh`。
+- [ ] 修改模型、thinking、default mode 后继续 prompt 成功。
+- [ ] ACP/Zed 日志不得把 `openclaw/acpx` draft assessment 记为官方 conformance 或 full pass。
 - [ ] unsupported capability 不被声明或不被误导性展示。
 
 ## 发布决策

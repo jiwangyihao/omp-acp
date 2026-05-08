@@ -19,7 +19,8 @@
 该脚本先构建 `dist/index.js`，再通过官方 SDK 创建 `ClientSideConnection`，覆盖：
 
 - `initialize`：校验 protocol version、agent info、已声明能力和未声明能力边界；
-- `session/new`：通过 SDK client 创建新会话；
+- `session/new`、`session/resume`、`session/fork`：校验 response 中的 ACP setup state（`models`、`modes`、`configOptions`）；
+- `session/set_model`、`session/set_config_option(thinking)`、`session/set_mode(default)`：通过 SDK client 调用，校验 config/mode update，并在每个 setter 后继续 prompt；
 - `session/prompt`：接收并校验 SDK 解析后的 `session/update` notification；
 - `session/list`：校验 OMP JSONL session discovery；
 - `session/resume`：确认 resume 不回放历史，后续 prompt 可继续；
@@ -35,6 +36,7 @@
 - build output 是否可启动；
 - stdout 是否只包含 JSON-RPC frame；
 - initialize/new/prompt 的最小端到端路径；
+- `session/set_model`、`session/set_config_option(thinking)`、`session/set_mode(default)`，以及每个 setter 后继续 prompt；
 - `session/fork` 与 fork 后 prompt 的端到端路径；
 - adapter 进程 stderr 是否保持为空。
 
@@ -44,12 +46,12 @@
 
 该脚本先构建 `dist/index.js`，再使用 raw JSON-RPC/NDJSON harness 按 ACP Registry Protocol Matrix 的风格执行：
 
-- `initialize` 使用 registry matrix 风格的 `clientInfo`、terminal 与 fs capability 参数；
-- 校验当前 truthful capability signal：`loadSession:true`、`sessionCapabilities.list:{}`、`sessionCapabilities.resume:{}`、`sessionCapabilities.fork:{}`，并确认 stop/set_model 未声明；
-- `session/new` 基础创建通过；
-- `session/list` 与一个预置 OMP JSONL session 的 `session/resume` probe 通过；
-- `session/fork` probe 成功，并确认 fork 后 session 可继续 prompt；
-- `session/stop`、`session/set_model` 返回 `method_not_found`，与未声明能力一致；
+- 校验当前 truthful capability signal：`loadSession:true`、`sessionCapabilities.list:{}`、`sessionCapabilities.resume:{}`、`sessionCapabilities.fork:{}`，并确认 stop/set_model/set_config_option/set_mode 不作为额外 initialize capability 声明；
+- `session/new` 基础创建通过，并返回 setup state；
+- `session/list` 与一个预置 OMP JSONL session 的 `session/resume` probe 通过，resume response 仍包含 setup state；
+- `session/fork` probe 成功，fork response 包含 setup state，并确认 fork 后 session 可继续 prompt；
+- `session/set_model`、`session/set_config_option(thinking)`、`session/set_mode(default)` probe 成功，并在 setter 后继续 prompt；
+- `session/stop` 返回 `method_not_found`，与未声明能力一致；
 - stdout 逐行校验为 JSON-RPC frame，避免 adapter stdout 污染。
 
 这不是直接运行 `agentclientprotocol/registry` CI；当前包仍为 `private`，没有 registry manifest，也没有实现 ACP auth flow。它用于在本地覆盖 registry matrix 最关键的 capability discovery 与 unsupported-method 边界。
@@ -60,7 +62,7 @@
 
 - `initialize`；
 - 基础 `session/new`；
-- `session/list`、`session/fork`、`session/resume`、`session/stop`、`session/set_model` 等方法探测。
+- `session/list`、`session/fork`、`session/resume`、`session/stop`、`session/set_model`、`session/set_config_option`、`session/set_mode` 等方法探测。
 
 Registry 的 auth checker 还会检查 `authMethods`，并明确要求 agent 不得向 stdout 写入非 ACP JSON-RPC 内容。
 
@@ -98,6 +100,8 @@ expected draft failures 的边界如下：
 - mock-agent 文本类 case（例如 unknown command、late tool update）验证的是 acpx 自带 mock-agent 行为，不是当前 OMP fixture runtime 的承诺。
 
 本次验证中发现并修复了一个真实错误语义问题：`session/prompt` 指向未知 session 时不再被 SDK 包装成 `Internal error`，而是返回显式 `Resource not found`。对应覆盖见 `test/smoke/session-prompt.test.ts`。
+
+Stage 8B 新增 `npm run smoke:omp-rpc-controls`，直接启动真实 `omp --mode rpc --session-dir <tmp> --no-title --no-extensions --no-skills --no-rules`，验证 `get_state`、`get_available_models`、`set_thinking_level`、`set_steering_mode`、`set_follow_up_mode`、`set_interrupt_mode`、`set_auto_compaction` 以及 setter 后 `get_state` 生效。该脚本找不到 `omp` 时会明确 skip；发布机器要求非 skip success。
 
 ## Zed GUI smoke 的位置
 

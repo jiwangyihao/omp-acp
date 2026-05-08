@@ -45,14 +45,18 @@
 7. 打开历史 session 列表；确认可见 OMP session。
 8. 对一个 session 执行 load；确认 text history replay 可见。
 9. 对一个 session 执行 resume；确认不会 replay history，后续 prompt 仍进入同一 OMP session。
+10. 打开模型 picker；确认可见模型列表来自 `session/new`/setup state，不显示 provider secret、API key、base URL 或完整 provider config。
+11. 打开 thinking picker；切换不同模型时确认 thinking 选项按当前模型 metadata 动态裁剪，不支持 `xhigh` 的模型不得允许主动提交 `xhigh`。
+12. 分别修改模型、thinking 和 default mode 后发送 prompt；确认 prompt 仍正常完成。
+13. 检查 ACP/Zed 日志；不得把 `openclaw/acpx` draft assessment 记录或描述成 ACP 官方 conformance/full pass。
 
 ## 通过标准
 
 - Zed ACP 日志中 `initialize` 的能力与 `docs/compatibility/capability-matrix.md` 一致。
 - stdout 只包含 ACP JSON-RPC frame；诊断信息不得污染 stdout。
-- `session/new`、`session/prompt`、`session/cancel`、`session/list`、`session/load`、`session/resume` 均按当前能力矩阵表现。
+- `session/new`、`session/prompt`、`session/cancel`、`session/list`、`session/load`、`session/resume`、`session/fork` 和 Stage 8B session controls 均按当前能力矩阵表现。
 - tool call、tool update、failed/cancelled tool status 和 structured diff 可被 Zed UI 正确展示。
-- 不支持能力不会被显示成可用能力；尤其是 MCP HTTP/SSE、audio、session fork/close、permission UX 和 usage update。
+- 不支持能力不会被显示成可用能力；尤其是 MCP HTTP/SSE、audio、session close、permission UX、usage update、多 OMP mode、sampling/service tier/tools toggles。
 
 ## 失败记录模板
 
@@ -66,4 +70,6 @@ omp-acp commit：
 实际结果：
 ACP 日志位置或摘录：
 是否 stdout 污染：是 / 否
+session controls（模型 / thinking / default mode）：通过 / 失败 / 未验证
+是否存在 secret/base URL/provider config 泄漏：是 / 否
 ```

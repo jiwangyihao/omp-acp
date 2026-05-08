@@ -25,6 +25,9 @@
 | `session/close` | 不支持 | SDK 0.21.0 已暴露 agent-side `session/close` method，但 adapter 尚无可防御的 OMP close 语义；不声明 | SDK method inventory + capability test |
 | `session/fork` | 已实现 | 声明 `sessionCapabilities.fork:{}`；第一阶段从源 OMP session 当前持久化 head fork 出新 session；不支持 message-bound fork / `_meta.messageId`；active prompt 下拒绝 | `forkOmpSessionFile` unit + `test/unit/acp/session-fork.test.ts` + `test/smoke/session-prompt.test.ts` + `scripts/smoke-acp.mjs` + `scripts/smoke-sdk-client.mjs` + `scripts/probe-registry-matrix.mjs` |
 | `session/resume` | 已实现 | 声明 `sessionCapabilities.resume:{}`；switch OMP session path，不 replay history | `test/unit/acp/session-resume.test.ts` + `test/smoke/session-prompt.test.ts` |
+| `session/set_model` | 已实现 | SDK 0.21.0 unstable method；不通过 `initialize` 额外声明 capability。模型列表与当前值来自 ACP setup response `models` 与 `configOptions(model)`；setter 成功后 reread OMP state 并发送 `config_option_update` | `test/unit/acp/session-controls.test.ts` + `test/unit/acp/session-config.test.ts` + `test/smoke/session-prompt.test.ts` + `scripts/smoke-acp.mjs` + `scripts/smoke-sdk-client.mjs` + `scripts/probe-registry-matrix.mjs` |
+| `session/set_config_option` | 已实现 | 支持 `model`、`thinking`、`_omp.steeringMode`、`_omp.followUpMode`、`_omp.interruptMode`、`_omp.autoCompaction`；active prompt 下拒绝；thinking 按当前模型 metadata 动态裁剪 | `test/unit/acp/session-controls.test.ts` + `test/unit/acp/session-config.test.ts` + `test/smoke/session-prompt.test.ts` + `scripts/smoke-acp.mjs` + `scripts/smoke-sdk-client.mjs` + `scripts/probe-registry-matrix.mjs` + `scripts/smoke-omp-rpc-controls.mjs` |
+| `session/set_mode` | 已实现 | 首批仅支持 `default` mode；非 `default` 返回 invalid params；不声明多 mode，不伪造 OMP agent/mode 切换 | `test/unit/acp/session-config.test.ts` + `test/smoke/session-prompt.test.ts` + `scripts/smoke-acp.mjs` + `scripts/smoke-sdk-client.mjs` + `scripts/probe-registry-matrix.mjs` |
 | `agent_message_chunk` | 已实现 | runtime `message_update` 文本输出映射为 ACP message chunk | `test/unit/translate/events-message.test.ts` + `test/smoke/session-prompt.test.ts` |
 | `agent_thought_chunk` | 已实现 | runtime thought/reasoning 标记映射为 ACP thought chunk | `test/unit/translate/events-message.test.ts` + `test/smoke/session-prompt.test.ts` |
 | `tool_call` | 已实现 | runtime tool start events 与 host-tool bridge pending 状态会作为 ACP `session/update` 发出；无额外 initialize flag | `test/unit/translate/tools.test.ts` + `test/unit/acp/session-handlers.test.ts` + `test/smoke/session-prompt.test.ts` |
@@ -52,10 +55,11 @@
 2. `npm run build` 通过；
 3. `npm run smoke:acp` 通过；
 4. `npm run smoke:sdk-client` 通过；
-5. `npm run validate:registry` 通过；
-6. `npm run validate:acpx` 完成，且没有 unexpected draft failure；
-7. 真实 `omp --mode rpc` ready smoke 通过，或在 `docs/release-checklist.md` 记录不可用原因；
-8. `scripts/smoke-zed.md` 中的 Zed 手工 smoke 全部通过。
+5. `npm run smoke:omp-rpc-controls` 通过，且发布机器上不得是 skip；
+6. `npm run validate:registry` 通过；
+7. `npm run validate:acpx` 完成，且没有 unexpected draft failure；
+8. 真实 `omp --mode rpc` controls smoke 通过，或在 `docs/release-checklist.md` 记录不可用原因；
+9. `scripts/smoke-zed.md` 中的 Zed 手工 smoke 全部通过。
 
 当前环境已安装官方 Zed 1.1.6，可用绝对路径 `C:/Users/34404/AppData/Local/Programs/Zed/bin/zed.exe` 启动；Zed 手工 smoke 仍需按 `scripts/smoke-zed.md` 在 GUI 中执行，因此仍是发布阻塞项。
 
