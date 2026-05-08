@@ -39,10 +39,11 @@ For fixture-only development, the adapter also supports these local test seams:
 
 Do not use those fixture seams for real Zed usage; they exist to make smoke tests deterministic.
 
-For build-output smoke before opening Zed, run:
+For build-output smoke before opening Zed, run both the raw JSON-RPC harness and the official TypeScript SDK client smoke:
 
 ```bash
 npm run smoke:acp
+npm run smoke:sdk-client
 ```
 
 For the manual Zed release gate, follow `scripts/smoke-zed.md`.

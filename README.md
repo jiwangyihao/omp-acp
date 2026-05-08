@@ -20,6 +20,7 @@ npm run typecheck
 npm run check
 npm run build
 npm run smoke:acp
+npm run smoke:sdk-client
 ```
 
 ### Stage 7 status
@@ -40,14 +41,15 @@ Run targeted Stage 6 checks with:
 node --import tsx --test test/unit/acp/initialize.test.ts test/unit/acp/session-resume.test.ts test/unit/translate/prompt.test.ts test/smoke/session-prompt.test.ts
 ```
 
-Run the build-output ACP smoke with:
+Run the build-output ACP smoke checks with both the raw JSON-RPC harness and the official TypeScript SDK client:
 
 ```bash
 npm run smoke:acp
+npm run smoke:sdk-client
 ```
 
 Do not use npm or npx installation commands for this package yet. The package remains `private` and has not been published.
 
 ## Current status
 
-This repository is in active development and is not ready for publication. Zed/custom-agent configuration is documented for local development in `docs/compatibility/zed.md`; registry or npm installation should wait until permission behavior, broader real-OMP parity, and release packaging are verified.
+This repository is in active development and is not ready for publication. Zed/custom-agent configuration is documented for local development in `docs/compatibility/zed.md`; ACP validation strategy is documented in `docs/compatibility/acp-validation.md`; registry or npm installation should wait until permission behavior, broader real-OMP parity, and release packaging are verified.

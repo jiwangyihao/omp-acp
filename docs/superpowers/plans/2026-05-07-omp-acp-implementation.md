@@ -428,7 +428,9 @@ node scripts/smoke-acp.mjs
 
 - 新增：`scripts/smoke-acp.mjs`
 - 新增：`scripts/smoke-zed.md`
+- 新增：`scripts/smoke-sdk-client.mjs`
 - 修改：`docs/compatibility/capability-matrix.md`
+- 新增：`docs/compatibility/acp-validation.md`
 - 新增：`docs/release-checklist.md`
 - 修改：`README.md`
 - 修改：`package.json`
@@ -438,6 +440,7 @@ node scripts/smoke-acp.mjs
 - [x] `npm run check` 通过；
 - [x] `npm run build` 通过；
 - [x] stdio smoke 通过（`npm run smoke:acp`）；
+- [x] official SDK client smoke 通过（`npm run smoke:sdk-client`）；
 - [x] 真实 `omp --mode rpc` ready smoke 通过（`omp/14.7.6`）；
 - [ ] Zed 手工 smoke 覆盖：new thread、prompt、tool call、edit diff、cancel、session list/load（已安装隔离用官方 Zed 1.1.6；GUI 手工步骤尚未执行，见 `docs/release-checklist.md`）；
 - [x] capability matrix 与实际 `initialize` 输出一致；

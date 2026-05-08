@@ -51,8 +51,9 @@
 1. `npm run check` 通过；
 2. `npm run build` 通过；
 3. `npm run smoke:acp` 通过；
-4. 真实 `omp --mode rpc` ready smoke 通过，或在 `docs/release-checklist.md` 记录不可用原因；
-5. `scripts/smoke-zed.md` 中的 Zed 手工 smoke 全部通过。
+4. `npm run smoke:sdk-client` 通过；
+5. 真实 `omp --mode rpc` ready smoke 通过，或在 `docs/release-checklist.md` 记录不可用原因；
+6. `scripts/smoke-zed.md` 中的 Zed 手工 smoke 全部通过。
 
 当前环境已安装官方 Zed 1.1.6，可用绝对路径 `C:/Users/34404/AppData/Local/Programs/Zed/bin/zed.exe` 启动；Zed 手工 smoke 仍需按 `scripts/smoke-zed.md` 在 GUI 中执行，因此仍是发布阻塞项。
 
