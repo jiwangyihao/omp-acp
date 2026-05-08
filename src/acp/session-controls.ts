@@ -286,8 +286,9 @@ function parseControlState(raw: unknown): OmpControlState {
 }
 
 function parseAvailableModels(raw: unknown): OmpModelSummary[] {
-  if (!Array.isArray(raw)) throw new Error("Invalid get_available_models response: expected array");
-  return raw.map((entry, index) => parseModel(requireRecord(entry, `get_available_models[${index}]`), `get_available_models[${index}]`));
+  const models = Array.isArray(raw) ? raw : requireRecord(raw, "get_available_models response").models;
+  if (!Array.isArray(models)) throw new Error("Invalid get_available_models response: expected array or { models: array }");
+  return models.map((entry, index) => parseModel(requireRecord(entry, `get_available_models[${index}]`), `get_available_models[${index}]`));
 }
 
 function parseModel(record: Record<string, unknown>, path: string): OmpModelSummary {

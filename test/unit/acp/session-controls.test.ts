@@ -45,11 +45,15 @@ class FakeRuntime implements RuntimeAdapter {
     { provider: "p", id: "m2", name: "Model Two", apiKey: "secret-key", thinking: { minLevel: "low", maxLevel: "xhigh" } },
   ];
   staleAfterSet: Partial<Record<string, boolean>> = {};
+  wrapAvailableModels = false;
 
   async request(method: string, params?: unknown): Promise<unknown> {
     this.requests.push({ method, params });
     if (method === "get_state") return structuredClone(this.state);
-    if (method === "get_available_models") return structuredClone(this.models);
+    if (method === "get_available_models") {
+      const models = structuredClone(this.models);
+      return this.wrapAvailableModels ? { models } : models;
+    }
     if (method === "set_model") {
       const input = params as { provider: string; modelId: string };
       if (!this.staleAfterSet.set_model) {
@@ -134,6 +138,17 @@ test("buildSessionSetupState returns safe model state and model config option", 
   assert.ok(!serialized.includes("secret-key"));
   assert.ok(!serialized.includes("baseUrl"));
   assert.ok(!serialized.includes("apiKey"));
+});
+
+test("buildSessionSetupState accepts OMP get_available_models wrapper object", async () => {
+  const runtime = new FakeRuntime();
+  runtime.wrapAvailableModels = true;
+
+  const state = await buildSessionSetupState(runtime);
+
+  assert.equal(state.models?.currentModelId, "p/m1");
+  assert.deepEqual(state.models?.availableModels.map((model) => model.modelId), ["p/m1", "p/m2"]);
+  assert.deepEqual(flatOptions(selectOption(state, "model")).map((option) => option.value), ["p/m1", "p/m2"]);
 });
 
 test("buildDefaultModeState exposes only the default mode", () => {
