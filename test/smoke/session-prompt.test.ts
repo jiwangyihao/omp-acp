@@ -164,6 +164,24 @@ function startAcpSubprocess(scenario: string, extraEnv: NodeJS.ProcessEnv = {}):
     rejectAll(new Error(`ACP subprocess closed before response: code=${code} signal=${signal}`));
   });
 
+  function waitForIncomingMessage(): Promise<JsonRpcObject> {
+    if (protocolError) {
+      return Promise.reject(protocolError);
+    }
+
+    return new Promise<JsonRpcObject>((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        const index = waiters.findIndex((waiter) => waiter.resolve === resolve);
+        if (index >= 0) {
+          waiters.splice(index, 1);
+        }
+        child.kill();
+        reject(new Error("Timed out waiting for ACP message"));
+      }, 10_000);
+      waiters.push({ resolve, reject, timeout });
+    });
+  }
+
   return {
     child,
     get stderr() {
@@ -183,17 +201,7 @@ function startAcpSubprocess(scenario: string, extraEnv: NodeJS.ProcessEnv = {}):
         return Promise.resolve(message);
       }
 
-      return new Promise<JsonRpcObject>((resolve, reject) => {
-        const timeout = setTimeout(() => {
-          const index = waiters.findIndex((waiter) => waiter.resolve === resolve);
-          if (index >= 0) {
-            waiters.splice(index, 1);
-          }
-          child.kill();
-          reject(new Error("Timed out waiting for ACP message"));
-        }, 10_000);
-        waiters.push({ resolve, reject, timeout });
-      });
+      return waitForIncomingMessage();
     },
     async nextResponse(id) {
       while (true) {
@@ -207,7 +215,7 @@ function startAcpSubprocess(scenario: string, extraEnv: NodeJS.ProcessEnv = {}):
           return message;
         }
 
-        const message = await this.nextMessage();
+        const message = await waitForIncomingMessage();
         if (message.id === id) {
           return message;
         }
