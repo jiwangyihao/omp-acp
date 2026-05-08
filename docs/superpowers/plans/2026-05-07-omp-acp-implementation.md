@@ -375,10 +375,10 @@ node scripts/smoke-acp.mjs
 - 新增：`src/runtime/omp/commands.ts`
 - 新增：`src/acp/handlers/session-list.ts`
 - 新增：`src/acp/handlers/session-load.ts`
-- 新增：`src/acp/commands.ts`
 - 新增：`test/unit/runtime/omp/config.test.ts`
 - 新增：`test/unit/runtime/omp/sessions.test.ts`
 - 新增：`test/unit/runtime/omp/commands.test.ts`
+- 新增：`test/unit/acp/session-list-load.test.ts`
 - 新增：`docs/compatibility/zed.md`
 
 **核心行为：**
@@ -391,11 +391,11 @@ node scripts/smoke-acp.mjs
 
 **验收标准：**
 
-- [ ] `session/list` 与 `session/load` 有 fixture 覆盖；
-- [ ] `.omp` 与 `.claude` 相关发现规则有测试；
-- [ ] `omp.extensions` command discovery 有测试；
-- [ ] 未支持的 extension UI request 不会被静默丢弃；
-- [ ] 文档给出 Zed 配置和当前限制。
+- [x] `session/list` 与 `session/load` 有 fixture 覆盖；
+- [x] `.omp` 与 `.claude` 相关发现规则有测试；
+- [x] `omp.extensions` manifest discovery 有测试；
+- [x] 未支持的 extension UI request 不会被静默丢弃；
+- [x] 文档给出 Zed 配置和当前限制。
 
 ### 阶段 6：OpenCode parity 功能层
 
@@ -485,4 +485,4 @@ node scripts/smoke-acp.mjs
 
 ## 7. 当前下一步
 
-阶段 1、阶段 2 和阶段 3 已完成。当前下一步是进入 **阶段 4：tool call、edit diff 与 host tool bridge**，在不声明 MCP、terminal/filesystem delegation、image/embedded context 等未实现能力的前提下，忠实映射 OMP runtime 已经发出的 tool/edit 事件。
+阶段 1 至阶段 5 已完成。当前下一步是进入 **阶段 6：OpenCode parity 功能层**，按 6A-6E 逐项实现或明确不声明 session lifecycle、image/embedded context、MCP、permission request、usage update 等能力；每个能力必须单独更新 capability matrix 和测试。

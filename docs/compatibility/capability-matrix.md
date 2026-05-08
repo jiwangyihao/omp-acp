@@ -16,12 +16,12 @@
 | 能力 | 当前状态 | 声明策略 | 验证要求 |
 |---|---|---|---|
 | ACP stdio transport | 已实现 | 内部可用；发布仍需后续阶段 | `test/smoke/acp-stdio.test.ts` |
-| `initialize` | 已实现 | 声明已实现的 baseline session/new + text/resource_link prompt；optional `promptCapabilities.image/audio/embeddedContext` 仍为 `false`，`loadSession`/MCP/session lifecycle 仍不声明或为 `false` | `test/unit/acp/initialize.test.ts` + smoke tests |
-| `session/new` | 已实现 | baseline ACP method 可用；不声明 session list/load/resume/fork/close | `test/smoke/session-prompt.test.ts` |
+| `initialize` | 已实现 | 声明已实现的 baseline session/new、text/resource_link prompt、session/list、text-history session/load；optional `promptCapabilities.image/audio/embeddedContext` 仍为 `false`，MCP/fork/resume/close 仍不声明或为 `false` | `test/unit/acp/initialize.test.ts` + smoke tests |
+| `session/new` | 已实现 | baseline ACP method 可用；不声明 session resume/fork/close | `test/smoke/session-prompt.test.ts` |
 | `session/prompt` text/resource_link | 已实现 | baseline text 与 resource_link 可用；image/audio/embedded context 不声明 | `test/unit/translate/prompt.test.ts` + `test/smoke/session-prompt.test.ts` |
 | `session/cancel` | 已实现 | baseline ACP notification 可用；best-effort 传递 runtime cancel 并本地抑制 late chunks | `test/unit/acp/session-handlers.test.ts` + `test/smoke/session-prompt.test.ts` |
-| `session/list` | 未实现 | 不声明 | OMP session fixture test |
-| `session/load` | 未实现 | 不声明 | OMP session fixture test |
+| `session/list` | 已实现 | 声明 `sessionCapabilities.list:{}`；按 OMP session JSONL header 扫描并支持 cwd filter | `test/unit/runtime/omp/sessions.test.ts` + `test/unit/acp/session-list-load.test.ts` + `test/smoke/session-prompt.test.ts` |
+| `session/load` | 已实现 | 声明 `loadSession:true`；支持 text-only OMP JSONL history replay，unsupported history fails load rather than silently dropping | `test/unit/acp/session-list-load.test.ts` + `test/smoke/session-prompt.test.ts` |
 | `session/close` | 未实现 | 不声明 | lifecycle contract test |
 | `session/fork` | 未实现 | 不声明 | lifecycle contract test |
 | `session/resume` | 未实现 | 不声明 | lifecycle contract test |
@@ -39,9 +39,9 @@
 | Filesystem delegation | 未实现 | 不声明 | Zed delegation smoke test |
 | Terminal delegation | 未实现 | 不声明 | Zed delegation smoke test |
 | Usage update | 待验证 | 不声明 | OMP usage event fixture test |
-| OMP slash commands | 未实现 | 不声明 | command discovery fixture test |
-| OMP skills commands | 未实现 | 不声明 | skills fixture test |
-| `omp.extensions` commands | 未实现 | 不声明 | extension manifest fixture test |
+| OMP slash commands | 已实现 | 仅 discovery metadata；不执行、不作为可用 slash command 暴露 | `test/unit/runtime/omp/commands.test.ts` |
+| OMP skills commands | 已实现 | 仅 discovery metadata；不执行、不作为可用 slash command 暴露 | `test/unit/runtime/omp/commands.test.ts` |
+| `omp.extensions` manifest entries | 已实现 | 仅 package/module entry discovery metadata；不执行 extension，不声称 runtime-registered command names | `test/unit/runtime/omp/commands.test.ts` |
 
 ## 更新规则
 
