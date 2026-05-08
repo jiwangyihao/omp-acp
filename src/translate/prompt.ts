@@ -52,7 +52,7 @@ function nonEmptyString(value: string | null | undefined): string | undefined {
   return value.trim().length === 0 ? undefined : value;
 }
 
-function rejectUnknownBlock(block: never): never {
+function rejectUnknownBlock(block: unknown): never {
   const type = typeof block === "object" && block !== null && "type" in block ? String(block.type) : "unknown";
   throw new PromptTranslationError(`Unsupported prompt content block: ${type}`);
 }

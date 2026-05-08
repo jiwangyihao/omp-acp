@@ -74,9 +74,10 @@ function createManager() {
 test("createSession awaits runtime readiness and stores the runtime", async () => {
   const { manager, runtimes, inputs } = createManager();
 
-  const createPromise = manager.createSession(newSessionRequest({ cwd: "/tmp/work", mcpServers: [{ type: "stdio", command: "server", args: [] }] }));
+  const mcpServers = [{ name: "fixture", command: "server", args: [], env: [] }];
+  const createPromise = manager.createSession(newSessionRequest({ cwd: "/tmp/work", mcpServers }));
   assert.equal(runtimes.length, 1);
-  assert.deepEqual(inputs, [{ cwd: "/tmp/work", mcpServers: [{ type: "stdio", command: "server", args: [] }], sessionId: "session-1" }]);
+  assert.deepEqual(inputs, [{ cwd: "/tmp/work", mcpServers, sessionId: "session-1" }]);
 
   runtimes[0]!.readyDeferred.resolve();
   assert.deepEqual(await createPromise, { sessionId: "session-1" });
@@ -85,7 +86,7 @@ test("createSession awaits runtime readiness and stores the runtime", async () =
   assert.equal(record.sessionId, "session-1");
   assert.equal(record.runtime, runtimes[0]);
   assert.equal(record.cwd, "/tmp/work");
-  assert.deepEqual(record.mcpServers, [{ type: "stdio", command: "server", args: [] }]);
+  assert.deepEqual(record.mcpServers, mcpServers);
 });
 
 test("createSession closes runtime and rejects with SessionManagerError when ready fails", async () => {
