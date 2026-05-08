@@ -63,6 +63,22 @@ try {
   assert.equal(probes["session/list"].outcome.status, "success");
   assert.equal(probes["session/fork"].outcome.status, "success");
   assert.equal(typeof probes["session/fork"].message.result.sessionId, "string");
+  const forkedSessionId = probes["session/fork"].message.result.sessionId;
+  assert.equal(typeof forkedSessionId, "string");
+  assert.notEqual(forkedSessionId, resumeSessionId);
+
+  const forkPrompt = await acp.request("session/prompt", {
+    sessionId: forkedSessionId,
+    prompt: [{ type: "text", text: "registry fork prompt" }],
+  });
+  assert.equal(forkPrompt.outcome.status, "success");
+  assert.deepEqual(forkPrompt.message.result, { stopReason: "end_turn" });
+  const forkUpdate = await acp.waitForMessage("fork prompt update", (candidate) =>
+    candidate.method === "session/update" &&
+    candidate.params?.sessionId === forkedSessionId &&
+    candidate.params?.update?.sessionUpdate === "agent_message_chunk"
+  );
+  assert.equal(forkUpdate.params.update.content?.text, "registry fork prompt");
   assert.equal(probes["session/resume"].outcome.status, "success");
   assert.equal(probes["session/stop"].outcome.status, "method_not_found");
   assert.equal(probes["session/set_model"].outcome.status, "method_not_found");
@@ -75,6 +91,7 @@ try {
     sessionNew: sessionNew.outcome.status,
     capabilities,
     resumeSessionPath,
+    forkPrompt: forkPrompt.outcome.status,
     probes: Object.fromEntries(
       Object.entries(probes).map(([method, result]) => [method, result.outcome]),
     ),
@@ -224,6 +241,9 @@ function startAcpSubprocess(agentDir) {
       child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id, method, params })}\n`);
       const message = await waitFor((candidate) => candidate.id === id, `${method} response`);
       return { message, outcome: classifyResponse(message) };
+    },
+    async waitForMessage(label, matches) {
+      return await waitFor(matches, label);
     },
     async close() {
       if (!childClosed) {
