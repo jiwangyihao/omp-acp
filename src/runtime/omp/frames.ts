@@ -73,13 +73,21 @@ function parseResponseFrame(rawFrame: Record<string, unknown>): OmpRpcResponseFr
     throw new OmpRpcFrameParseError("Invalid OMP RPC response frame: missing id");
   }
 
+  const hasResult = Object.hasOwn(rawFrame, "result");
+  const hasError = Object.hasOwn(rawFrame, "error");
+  if (hasResult === hasError) {
+    throw new OmpRpcFrameParseError(
+      "Invalid OMP RPC response frame: must include exactly one result or error",
+    );
+  }
+
   const response: OmpRpcResponseFrame = { type: "response", id };
 
-  if (Object.hasOwn(rawFrame, "result")) {
+  if (hasResult) {
     response.result = rawFrame.result;
   }
 
-  if (Object.hasOwn(rawFrame, "error")) {
+  if (hasError) {
     response.error = rawFrame.error;
   }
 

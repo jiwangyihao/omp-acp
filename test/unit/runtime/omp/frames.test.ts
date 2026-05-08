@@ -90,6 +90,33 @@ describe("parseOmpRpcFrame", () => {
     );
   });
 
+  it("rejects response frames without a terminal result or error", () => {
+    assert.throws(
+      () => parseOmpRpcFrame('{"type":"response","id":1}'),
+      (error) =>
+        error instanceof OmpRpcFrameParseError && error.message.includes("result or error"),
+    );
+  });
+
+  it("rejects response frames with both result and error", () => {
+    assert.throws(
+      () => parseOmpRpcFrame('{"type":"response","id":1,"result":{},"error":{}}'),
+      (error) =>
+        error instanceof OmpRpcFrameParseError && error.message.includes("exactly one"),
+    );
+  });
+
+  it("rejects response frames with invalid present ids", () => {
+    for (const id of [null, true, {}, []]) {
+      assert.throws(
+        () => parseOmpRpcFrame(JSON.stringify({ type: "response", id, result: { ok: true } })),
+        (error) =>
+          error instanceof OmpRpcFrameParseError &&
+          (error.message.includes("missing id") || error.message.includes("invalid id")),
+      );
+    }
+  });
+
   it("rejects non-object JSON values", () => {
     for (const line of ["null", "[]", "42"]) {
       assert.throws(
