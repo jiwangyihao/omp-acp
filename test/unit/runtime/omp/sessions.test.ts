@@ -117,9 +117,9 @@ describe("loadOmpSessionHistory", () => {
       path,
       [
         { type: "session", id: "history", cwd: "/project" },
-        { type: "message", role: "user", content: "hello" },
-        { type: "message", role: "assistant", content: [{ type: "text", text: "hi" }] },
-        { type: "message", role: "user", content: [{ type: "text", text: "again" }] },
+        { type: "message", message: { role: "user", content: "hello" } },
+        { type: "message", message: { role: "assistant", content: [{ type: "text", text: "hi" }] } },
+        { type: "message", message: { role: "user", content: [{ type: "text", text: "again" }] } },
       ].map((entry) => JSON.stringify(entry)).join("\n") + "\n",
       "utf8",
     );

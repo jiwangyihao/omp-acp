@@ -92,13 +92,14 @@ export async function loadOmpSessionHistory(path: string): Promise<SessionUpdate
       continue;
     }
 
-    if (entry.role !== "user" && entry.role !== "assistant") {
+    const message = isRecord(entry.message) ? entry.message : entry;
+    if (message.role !== "user" && message.role !== "assistant") {
       throw new Error(`Unsupported OMP message role in ${path}:${index + 1}`);
     }
 
     updates.push({
-      sessionUpdate: entry.role === "user" ? "user_message_chunk" : "agent_message_chunk",
-      content: { type: "text", text: extractMessageText(entry.content, path, index + 1) },
+      sessionUpdate: message.role === "user" ? "user_message_chunk" : "agent_message_chunk",
+      content: { type: "text", text: extractMessageText(message.content, path, index + 1) },
     } as SessionUpdate);
   }
 
