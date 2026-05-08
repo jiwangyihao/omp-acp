@@ -61,6 +61,9 @@ omp --mode rpc --session-dir <temp> --no-title --no-extensions --no-skills --no-
 - `set_model` 支持 `{ type:"set_model", provider, modelId }` 并返回当前模型对象。
 - `set_thinking_level` 支持 `{ type:"set_thinking_level", level }`；设置 `low` 后再次 `get_state` 可观察到 `thinkingLevel:"low"`。
 - `set_steering_mode` 支持 `{ type:"set_steering_mode", mode:"all" }`；再次 `get_state` 可观察到 `steeringMode:"all"`。
+- `set_follow_up_mode` 支持 `{ type:"set_follow_up_mode", mode:"all" }`；设置后再次 `get_state` 可观察到 `followUpMode:"all"`。
+- `set_interrupt_mode` 支持 `{ type:"set_interrupt_mode", mode:"wait" }`；设置后再次 `get_state` 可观察到 `interruptMode:"wait"`。
+- `set_auto_compaction` 支持 `{ type:"set_auto_compaction", enabled:false }`；设置后再次 `get_state` 可观察到 `autoCompactionEnabled:false`。
 
 ### OMP native ACP 参考
 
@@ -106,6 +109,8 @@ omp --mode rpc --session-dir <temp> --no-title --no-extensions --no-skills --no-
 - `configOptions` 同时提供 `id:"model"`、`category:"model"` 的 select，以兼容偏好 config option UI 的 client。
 - `unstable_setSessionModel({ sessionId, modelId })` 与 `setSessionConfigOption({ configId:"model", value:modelId })` 必须走同一条实现路径。
 - 设置模型时，adapter 必须解析 `modelId` 得到 `provider` 与 `modelId`，调用 OMP RPC `set_model`，然后重新读取 `get_state` 与 `get_available_models`，重建 `models` 与 `configOptions`。
+- 如果 `get_state.model` 不在 `get_available_models` 返回列表中，adapter 必须将该 current model 作为 current-only entry 合并到 `availableModels` 与 `model` select options 中，name 使用模型名或 `${provider}/${id}`，description 标明「当前 runtime model；未出现在 available model list 中」。不得让 `currentModelId` 指向不存在的 option。
+- 模型列表只映射 ACP 需要的安全字段：`modelId`、`name`、不含 secret 的 description。不得把 `baseUrl`、`apiKey`、provider raw config 或完整 OMP model object 放进 ACP response 或 `_meta`。列表顺序默认保持 OMP `get_available_models` 顺序；current-only entry 追加到末尾。
 
 ### 推理强度 / thought level
 
@@ -174,14 +179,25 @@ type OmpRpcCommandType =
 // prompt
 { id, type: "prompt", message, images? }
 
-// switch session
+// abort current turn
+{ id, type: "abort" }
+
+// switch session file
 { id, type: "switch_session", sessionPath }
 
-// get state
+// read state and models
 { id, type: "get_state" }
+{ id, type: "get_available_models" }
 
-// set model
+// set model and thinking
 { id, type: "set_model", provider, modelId }
+{ id, type: "set_thinking_level", level }
+
+// set OMP-specific interaction/context options
+{ id, type: "set_steering_mode", mode }
+{ id, type: "set_follow_up_mode", mode }
+{ id, type: "set_interrupt_mode", mode }
+{ id, type: "set_auto_compaction", enabled }
 ```
 
 `cancelPrompt()` 不再发送 `{ type:"cancel" }`。它应调用 OMP `abort`：
@@ -189,6 +205,8 @@ type OmpRpcCommandType =
 ```ts
 runtime.request("abort")
 ```
+
+该迁移只改变发送给 OMP 的命令名与 frame 形状；`SessionManager.cancelPrompt()` 仍必须保留本地 `activePrompt.cancellation.cancel()`、prompt `finish()` 清理和 late chunk 抑制语义。
 
 `translatePromptToOmpRequest()` 应生成 `message` 而不是 `prompt` 字段，且不再把 ACP `sessionId` 放入 OMP prompt command。OMP RPC process 已经绑定到单个 session；`sessionId` 是 ACP adapter 层的管理字段，不是 OMP `prompt` command 字段。
 
@@ -250,17 +268,15 @@ export type OmpSessionControlState = {
 
 建议改造：
 
-- 将 `createSession(params)` 改为返回 `SessionRecord`，或新增 `createSessionRecord(params)` 并让 handler 使用它。
-- `handleSessionNew()` 创建 record 后调用 `buildSessionSetupState(record.runtime)`，返回：
-
-```ts
-{
-  sessionId: record.sessionId,
-  ...sessionSetupState
-}
-```
-
-- `handleSessionLoad()`、`handleSessionResume()`、`handleSessionFork()` 在完成 `switch_session` 并发布 session 后，调用同一个 state builder，把结果附加到各自 response。
+- `createSessionWithId()` 需要支持在 publish 前完成所有会影响 setup response 的 runtime 准备工作。实现可以沿用现有 `beforePublish(runtime)` closure：在 hook 中执行 `switch_session`（仅 load/resume/fork 需要）并调用 `buildSessionSetupState(runtime)`；hook 成功后才允许 `#sessions.set(sessionId, record)`。
+- `handleSessionNew()` 使用同一 publish 前 hook 读取并验证 control state，然后返回：
+  ```ts
+  {
+    sessionId: record.sessionId,
+    ...capturedSessionSetupState
+  }
+  ```
+- `handleSessionLoad()`、`handleSessionResume()`、`handleSessionFork()` 必须在 publish 前完成 `switch_session` 与 control-state 读取/验证；任一步失败都不得发布 session。fork 场景还必须保留既有语义：如果 `switch_session` 或 state build 失败，删除本次 fork 文件，不留下 orphan session 文件。
 
 ### ACP setters
 
@@ -294,15 +310,23 @@ async setSessionConfigOption(params) {
 | 未知 modelId | `RequestError.invalidParams(...)` |
 | thinking level 不被当前模型支持 | `RequestError.invalidParams(...)`，message 包含模型与支持范围 |
 | OMP RPC setter 返回 `success:false` | 映射为明确 error，保留 OMP command/error，不伪造成功 |
+| session 有 active prompt 时执行 mutating config setter | `RequestError.invalidParams(...)`，message 说明 cannot change session controls during an active prompt |
 
 setter 成功后：
 
 1. 重新读取 control state。
-2. 通过 `connection.sessionUpdate({ sessionId, update:{ sessionUpdate:"config_option_update", configOptions } })` 推送最新配置。
-3. 返回 ACP setter response：
+2. 校验请求的值已经真实生效：
+   - `model` 必须等于请求的 ACP model id；
+   - `thinking` 必须等于请求值，除非请求 `off` 且 OMP state 用空值或 `inherit` 表示关闭；
+   - OMP-specific option 必须等于请求值。
+3. 若 OMP 返回 `success:true` 但 reread state stale、缺失或与请求不一致，返回明确错误，不发送成功响应，也不发送误导性的 `config_option_update`。
+4. 通过 `connection.sessionUpdate({ sessionId, update:{ sessionUpdate:"config_option_update", configOptions } })` 推送最新配置。
+5. 返回 ACP setter response：
    - `setSessionConfigOption` 返回 `{ configOptions }`。
    - `unstable_setSessionModel` 返回 `{}`。
    - `setSessionMode` 返回 `{}`。
+
+所有 mutating config setter（model、thinking、steering、follow-up、interrupt、auto-compaction）在 `SessionRecord.activePrompt !== undefined` 时必须拒绝。ACP SDK 虽允许部分 mode 操作在 active turn 中调用，但本规格未观察真实 OMP streaming-time mutation 安全性，因此第一阶段以 session 稳定性优先。
 
 ## 测试策略
 
@@ -317,6 +341,8 @@ setter 成功后：
 - `request serializes prompt using OMP type/message command shape`
   - fixture 捕获 stdin frame；断言 `{ id, type:"prompt", message:"hello" }`，不包含 `method`、`params`、`sessionId`。
 - `request serializes switch_session using top-level sessionPath`
+- `request serializes get_state and get_available_models using top-level type-only frames`
+- `request serializes set_thinking_level, set_steering_mode, set_follow_up_mode, set_interrupt_mode, and set_auto_compaction using top-level payload fields`
 - `request resolves real OMP success response data`
   - fixture 返回 `{ id, type:"response", command:"get_state", success:true, data:{ thinkingLevel:"low" } }`。
 - `request rejects real OMP failure response`
@@ -347,6 +373,8 @@ setter 成功后：
 - `set thinking xhigh` 在当前模型只支持到 `high` 时失败，且不会调用 runtime setter。
 - 切换 model 后重建 thinking options。
 - `_omp.steeringMode`、`_omp.followUpMode`、`_omp.interruptMode`、`_omp.autoCompaction` 映射 currentValue。
+- current runtime model 不在 available model list 时，合并 current-only model/option，且 `currentModelId` 不指向缺失 option。
+- OMP 当前 thinking 值超出模型 metadata 支持范围时，将该 current value 追加为 current-only option；用户主动设置同一超范围值仍必须失败。
 
 ### Unit: ACP handlers
 
@@ -354,23 +382,25 @@ setter 成功后：
 
 覆盖：
 
-- `newSession` 返回 `models`、`modes`、`configOptions`。
-- `loadSession/resumeSession/forkSession` 在 `switch_session` 后返回同样 state。
-- `unstable_setSessionModel` 对有效 model 调用 `set_model`，发送 `config_option_update`。
+- `newSession` 在 publish 前读取 control state，返回 `models`、`modes`、`configOptions`；若 state build 失败，不发布 session。
+- `loadSession/resumeSession/forkSession` 在 publish 前完成 `switch_session` 与 state build，返回同样 state；`switch_session` 或 state build 失败时不发布 session，fork 失败时删除本次 fork 文件。
+- `unstable_setSessionModel` 对有效 model 调用 `set_model`，reread 后校验生效，发送 `config_option_update`，再允许继续 `session/prompt`。
 - `setSessionConfigOption(model)` 与 `unstable_setSessionModel` 行为一致。
-- `setSessionConfigOption(thinking)` 先校验当前模型范围，再调用 `set_thinking_level`。
-- `setSessionConfigOption(_omp.steeringMode)` 调用 `set_steering_mode`。
-- 未知 session、未知 configId、错误 value type 都返回明确 ACP error。
+- `setSessionConfigOption(thinking)` 先校验当前模型范围，再调用 `set_thinking_level`，reread 后校验生效。
+- `setSessionConfigOption(_omp.steeringMode)`、`_omp.followUpMode`、`_omp.interruptMode`、`_omp.autoCompaction` 分别调用对应 OMP setter，reread 后校验生效。
+- `setSessionMode(default)` 返回成功并可发送 `current_mode_update`；非 default mode 明确失败。
+- 任一 mutating config setter 在 session 有 active prompt 时失败，且不会调用 runtime setter。
+- 未知 session、未知 configId、错误 value type、setter success 后 state stale 都返回明确 ACP error。
 
 ### Smoke / validation
 
 扩展：
 
-- `test/smoke/session-prompt.test.ts`：raw JSON-RPC `session/new` response 断言包含 `configOptions`，并通过 `session/set_config_option` 设置 fixture thinking 后继续 prompt。
-- `scripts/smoke-acp.mjs`：summary 增加 `sessionConfigOptions:true`、`sessionSetConfigOption:true`。
-- `scripts/smoke-sdk-client.mjs`：覆盖 SDK client 调用 setter。
-- `scripts/probe-registry-matrix.mjs`：把 `session/set_model`、`session/set_config_option` 从 `method_not_found` 更新为已实现，并验证 fork 后 session 也返回 config state。
-- 新增真实 OMP RPC 控制 smoke（建议 `scripts/smoke-omp-rpc-controls.mjs`）：当本机有 `omp` 时，用临时 `--session-dir` 验证 `get_state/get_available_models/set_thinking_level`。该脚本可作为 release gate；CI 无 OMP 时必须明确 skip 并输出原因，不能假 pass。
+- `test/smoke/session-prompt.test.ts`：raw JSON-RPC `session/new` response 断言包含 `models`、`modes`、`configOptions`；分别通过 `session/set_model`、`session/set_config_option(thinking)`、`session/set_mode(default)` 后继续 `session/prompt`；同时验证非 default mode 被拒绝。
+- `scripts/smoke-acp.mjs`：summary 增加 `sessionConfigOptions:true`、`sessionSetModel:true`、`sessionSetConfigOption:true`、`sessionSetMode:true`，并验证每条 setter 成功后继续 prompt。
+- `scripts/smoke-sdk-client.mjs`：覆盖 SDK client 调用 `unstable_setSessionModel`、`setSessionConfigOption`、`setSessionMode(default)` 与后续 prompt。
+- `scripts/probe-registry-matrix.mjs`：把 `session/set_model`、`session/set_config_option`、`session/set_mode` 从 unsupported/method-not-found probe 更新为已实现 probe；校验 response shape、summary 字段、fork 后 session config state、setter 后 prompt，以及 adapter stdout 仍只输出 ACP JSON-RPC/NDJSON。
+- 新增真实 OMP RPC 控制 smoke `scripts/smoke-omp-rpc-controls.mjs` 与 npm script `smoke:omp-rpc-controls`：当本机有 `omp` 时，用临时 `--session-dir` 验证 `get_state/get_available_models/set_thinking_level/set_steering_mode/set_follow_up_mode/set_interrupt_mode/set_auto_compaction` 均可 round-trip；无 `omp` 时必须输出 explicit skip reason 与 `skipped:true` summary，不能假装 pass。`validate:standard` 应调用该脚本；发布清单必须要求目标发布机器得到非 skip 成功结果。
 
 ## 文档与能力声明
 
@@ -384,10 +414,13 @@ setter 成功后：
 - `docs/compatibility/zed.md`
   - 说明 ZedG 中 `omp-acp-local` 的模型/推理强度来源。
   - 说明推理强度会按模型动态变化，某些模型不显示 `xhigh` 是正确行为。
+- 更新 `scripts/smoke-zed.md`：加入 ZedG 手工检查项，覆盖模型选择器可见、thinking 选项随模型变化、只支持到 `high` 的模型不展示 `xhigh` 或 setter 明确拒绝、设置后继续 prompt、日志不误报官方 conformance。
 - `README.md`
   - 更新本地 custom agent 能力说明。
 - `docs/release-checklist.md`
   - 增加真实 OMP RPC control smoke 与 ZedG 手工 UI 检查项。
+- `docs/compatibility/acp-validation.md`
+  - 更新 registry probe 对 `session/set_model`、`session/set_config_option`、`session/set_mode` 的说明；继续强调 `openclaw/acpx` 是第三方 draft assessment，不是 ACP 官方完整 conformance。
 
 `initialize` 不需要新增单独 capability flag 来声明 `models/configOptions`；这些能力通过 session setup response 与对应 agent-side methods 体现。必须保证 matrix、docs 与实际 method support 一致。
 
@@ -396,11 +429,12 @@ setter 成功后：
 - 真实 OMP RPC command shape 已修正；adapter 不再向 OMP 发送 `{ method, params }`。
 - `session/new/load/resume/fork` response 包含真实 control state。
 - ZedG 能看到模型与推理强度配置；推理强度按当前模型动态裁剪。
-- `session/set_model` 与 `session/set_config_option` 可用，且设置后可继续 `session/prompt`。
+- `session/set_model`、`session/set_config_option` 与 `session/set_mode(default only)` 可用，且每条 setter 成功后可继续 `session/prompt`；非 default mode 明确失败。
 - 对不支持的 thinking effort 返回明确错误；不得把 runtime failure 当成功。
 - 不暴露 API key、baseUrl 或 provider raw config。
-- `npm run check`、`npm run smoke:acp`、`npm run smoke:sdk-client`、`npm run validate:registry` 通过。
-- 真实 OMP RPC control smoke 在本机通过，或在无 OMP 环境明确 skip。
+- `npm run check`、`npm run smoke:acp`、`npm run smoke:sdk-client`、`npm run smoke:omp-rpc-controls`、`npm run validate:registry`、`npm run validate:standard` 通过。
+- 真实 OMP RPC control smoke 在本机通过；无 OMP 环境只允许 explicit skip，发布清单中的目标发布机器必须记录非 skip 成功。
+- adapter stdout 只能输出 ACP JSON-RPC/NDJSON；新增 diagnostics 与 smoke summary 只能来自 smoke 脚本自身或 adapter stderr，不得污染 adapter 协议 stdout。
 - ZedG 手工 smoke 仍是发布阻塞项；本阶段不能声明 Zed GUI 已完成验证，除非实际执行并记录结果。
 
 ## 风险与处理
@@ -408,7 +442,7 @@ setter 成功后：
 | 风险 | 处理 |
 |---|---|
 | ACP model API 仍是 unstable | 文档标注；测试固定 SDK 0.21.0；不泛化到未知 SDK minor。 |
-| OMP model id 使用 `provider/id` 编码，model id 本身可能含 `/` | 按第一个 `/` 分割 provider；若未来 provider 允许 `/`，需改为 `_meta` 或 JSON-safe encoding。当前 OMP provider id 未观察到 `/`。 |
+| OMP model id 使用 `provider/id` 编码，model id 本身可能含 `/` | 本阶段按第一个 `/` 分割 provider，因为当前观察到的 OMP provider id 不含 `/`；若未来 provider id 允许 `/`，必须迁移到公开且无歧义的 modelId 编码（例如 base64url JSON payload 或 length-prefixed encoding）。`_meta` 不得作为 setter 正确性依赖。 |
 | 当前用户配置的默认 thinking 可能超出默认模型支持范围 | session setup 读取真实 `get_state`；setter 严格校验；若 OMP 启动阶段直接失败，adapter 应保留 runtime ready failure，不伪造 config state。 |
 | `get_state` 未返回某些 setter 的 current state | 不暴露该项。例如 `set_auto_retry` 暂缓。 |
 | 真实 OMP 会输出与 prompt 无关的 extension UI event | 不在本阶段伪造支持；若事件发生在 active prompt 中，沿用现有 unsupported event 失败语义，后续单独设计。 |
@@ -416,9 +450,9 @@ setter 成功后：
 
 ## 实现顺序约束
 
-1. 先修真实 OMP RPC contract，并更新 fixture/contract tests。
-2. 再实现只读 control state builder，并让 session setup responses 返回 state。
-3. 再实现 model/thinking setters。
-4. 最后扩展 OMP-specific options 与文档/验证矩阵。
+1. 先串行修真实 OMP RPC contract，并同步更新 fixture、prompt translation 与 contract tests；该任务会触碰 `rpc-client.ts`、`prompt.ts`、`script-rpc-process.ts` 和既有 smoke，不能与依赖 runtime frame shape 的任务并发。
+2. 再实现只读 control state builder 与单元测试；该任务可在 runtime contract 通过后独立推进，主要触碰 `src/acp/session-controls.ts` 与 `test/unit/acp/session-controls.test.ts`。
+3. 再实现 ACP handlers 与 session setup response wiring；该任务依赖 state builder，主要触碰 `src/acp/server.ts`、`src/acp/handlers/*`、`src/session/manager.ts` 与 handler tests。
+4. 最后扩展 smoke、registry probe、package scripts、README、compatibility docs、release checklist 与 Zed smoke 文档；这些文档/脚本任务必须等 method 名称、summary 字段和 npm script 名称稳定后再并发拆分，避免多个子代理同时改 `package.json`、capability matrix 或 release docs。
 
 不得先声明 `session/set_model` 或返回 config options 后再补 runtime contract。配置 UI 必须建立在真实 OMP RPC 可用性的证据上。
