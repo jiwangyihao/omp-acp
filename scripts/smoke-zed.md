@@ -48,15 +48,16 @@
 10. 打开模型 picker；确认可见模型列表来自 `session/new`/setup state，不显示 provider secret、API key、base URL 或完整 provider config。
 11. 打开 thinking picker；切换不同模型时确认 thinking 选项按当前模型 metadata 动态裁剪，不支持 `xhigh` 的模型不得允许主动提交 `xhigh`。
 12. 分别修改模型、thinking 和 default mode 后发送 prompt；确认 prompt 仍正常完成。
-13. 检查 ACP/Zed 日志；不得把 `openclaw/acpx` draft assessment 记录或描述成 ACP 官方 conformance/full pass。
+13. 确认 Zed 不再显示 steering mode、follow-up mode、interrupt mode、auto compaction 这四个 OMP-specific runtime knobs。
+14. 检查 ACP/Zed 日志；不得把 `openclaw/acpx` draft assessment 记录或描述成 ACP 官方 conformance/full pass。
 
 ## 通过标准
 
 - Zed ACP 日志中 `initialize` 的能力与 `docs/compatibility/capability-matrix.md` 一致。
 - stdout 只包含 ACP JSON-RPC frame；诊断信息不得污染 stdout。
-- `session/new`、`session/prompt`、`session/cancel`、`session/list`、`session/load`、`session/resume`、`session/fork` 和 Stage 8B session controls 均按当前能力矩阵表现。
+- `session/new`、`session/prompt`、`session/cancel`、`session/list`、`session/load`、`session/resume`、`session/fork` 和当前 session controls（model、thinking、default mode）均按当前能力矩阵表现。
 - tool call、tool update、failed/cancelled tool status 和 structured diff 可被 Zed UI 正确展示。
-- 不支持能力不会被显示成可用能力；尤其是 MCP HTTP/SSE、audio、session close、permission UX、usage update、多 OMP mode、sampling/service tier/tools toggles。
+- 不支持能力不会被显示成可用能力；尤其是 MCP HTTP/SSE、audio、session close、permission UX、usage update、多 OMP mode、sampling/service tier/tools toggles，以及 steering/follow-up/interrupt/auto compaction 这四个已隐藏的 OMP-specific runtime knobs。
 
 ## 失败记录模板
 

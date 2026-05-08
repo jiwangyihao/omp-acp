@@ -102,12 +102,6 @@ function flatOptions(option: ReturnType<typeof selectOption>): Array<{ value: st
   return option.options as Array<{ value: string; name: string; description?: string | null }>;
 }
 
-function booleanOption(state: Awaited<ReturnType<typeof buildSessionSetupState>>, id: string) {
-  const option = state.configOptions?.find((candidate) => candidate.id === id);
-  assert.ok(option, `missing option ${id}`);
-  assert.equal(option.type, "boolean");
-  return option;
-}
 
 async function assertInvalidParams(promise: Promise<unknown>, messagePattern: RegExp): Promise<void> {
   await assert.rejects(promise, (error) => {
@@ -158,33 +152,16 @@ test("buildDefaultModeState exposes only the default mode", () => {
   });
 });
 
-test("buildSessionSetupState returns all supported config controls", async () => {
-  const state = await buildSessionSetupState(new FakeRuntime());
-
-  assert.equal(selectOption(state, "model").category, "model");
-  assert.equal(selectOption(state, "thinking").category, "thought_level");
-  assert.equal(selectOption(state, "_omp.steeringMode").currentValue, "all");
-  assert.equal(selectOption(state, "_omp.followUpMode").currentValue, "one-at-a-time");
-  assert.equal(selectOption(state, "_omp.interruptMode").currentValue, "immediate");
-  assert.equal(booleanOption(state, "_omp.autoCompaction").currentValue, true);
-});
-
-test("unexpected OMP-specific current values remain visible instead of defaulting", async () => {
+test("buildSessionSetupState returns only visible model and thinking controls", async () => {
   const runtime = new FakeRuntime();
   runtime.state.steeringMode = "experimental";
-
-  const state = await buildSessionSetupState(runtime);
-  const steering = selectOption(state, "_omp.steeringMode");
-
-  assert.equal(steering.currentValue, "experimental");
-  assert.ok(flatOptions(steering).some((option) => option.value === "experimental" && /当前 runtime 值/.test(option.description ?? "")));
-});
-
-test("missing OMP-specific current state fails instead of fabricating defaults", async () => {
-  const runtime = new FakeRuntime();
   delete (runtime.state as Partial<FakeState>).autoCompactionEnabled;
 
-  await assert.rejects(buildSessionSetupState(runtime), /get_state\.autoCompactionEnabled/);
+  const state = await buildSessionSetupState(runtime);
+
+  assert.deepEqual(state.configOptions?.map((option) => option.id), ["model", "thinking"]);
+  assert.equal(selectOption(state, "model").category, "model");
+  assert.equal(selectOption(state, "thinking").category, "thought_level");
 });
 
 test("thinking options are clipped to the current model metadata", async () => {
@@ -254,24 +231,20 @@ test("thinking setter calls RPC and verifies reread currentValue", async () => {
   assert.equal(selectOption(state, "thinking").currentValue, "low");
 });
 
-test("OMP-specific setters call matching RPC and verify reread currentValue", async () => {
+test("hidden OMP-specific config ids are rejected and do not call runtime setters", async () => {
   const runtime = new FakeRuntime();
 
-  assert.equal(selectOption(await setSessionConfigControl(runtime, setRequest("_omp.steeringMode", "one-at-a-time")), "_omp.steeringMode").currentValue, "one-at-a-time");
-  assert.equal(selectOption(await setSessionConfigControl(runtime, setRequest("_omp.followUpMode", "all")), "_omp.followUpMode").currentValue, "all");
-  assert.equal(selectOption(await setSessionConfigControl(runtime, setRequest("_omp.interruptMode", "wait")), "_omp.interruptMode").currentValue, "wait");
-  assert.equal(booleanOption(await setSessionConfigControl(runtime, setRequest("_omp.autoCompaction", false)), "_omp.autoCompaction").currentValue, false);
-  assert.ok(runtime.requests.some((request) => request.method === "set_steering_mode" && assert.deepEqual(request.params, { mode: "one-at-a-time" }) === undefined));
-  assert.ok(runtime.requests.some((request) => request.method === "set_follow_up_mode" && assert.deepEqual(request.params, { mode: "all" }) === undefined));
-  assert.ok(runtime.requests.some((request) => request.method === "set_interrupt_mode" && assert.deepEqual(request.params, { mode: "wait" }) === undefined));
-  assert.ok(runtime.requests.some((request) => request.method === "set_auto_compaction" && assert.deepEqual(request.params, { enabled: false }) === undefined));
+  await assertInvalidParams(setSessionConfigControl(runtime, setRequest("_omp.steeringMode", "one-at-a-time")), /Unknown configId/);
+  await assertInvalidParams(setSessionConfigControl(runtime, setRequest("_omp.followUpMode", "all")), /Unknown configId/);
+  await assertInvalidParams(setSessionConfigControl(runtime, setRequest("_omp.interruptMode", "wait")), /Unknown configId/);
+  await assertInvalidParams(setSessionConfigControl(runtime, setRequest("_omp.autoCompaction", false)), /Unknown configId/);
+
+  assert.equal(runtime.requests.some((request) => request.method.startsWith("set_")), false);
 });
 
 test("invalid config control values are rejected before RPC", async () => {
   const runtime = new FakeRuntime();
 
-  await assertInvalidParams(setSessionConfigControl(runtime, setRequest("_omp.steeringMode", "bad")), /Invalid value/);
-  await assertInvalidParams(setSessionConfigControl(runtime, setRequest("_omp.autoCompaction", "false")), /boolean/);
   await assertInvalidParams(setSessionConfigControl(runtime, setRequest("unknown", "value")), /Unknown configId/);
 
   assert.equal(runtime.requests.some((request) => request.method.startsWith("set_")), false);

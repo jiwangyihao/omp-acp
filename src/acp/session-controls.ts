@@ -13,10 +13,6 @@ type OmpModelSummary = {
 type OmpControlState = {
   model: OmpModelSummary;
   thinkingLevel?: string | null;
-  steeringMode: string;
-  followUpMode: string;
-  interruptMode: string;
-  autoCompactionEnabled: boolean;
 };
 
 type SelectOption = { value: string; name: string; description?: string };
@@ -28,9 +24,6 @@ type Snapshot = {
 };
 
 const THINKING_ORDER = ["minimal", "low", "medium", "high", "xhigh"] as const;
-const STEERING_VALUES = ["all", "one-at-a-time"] as const;
-const FOLLOW_UP_VALUES = ["all", "one-at-a-time"] as const;
-const INTERRUPT_VALUES = ["immediate", "wait"] as const;
 
 export function buildDefaultModeState(): SessionModeState {
   return {
@@ -67,14 +60,6 @@ export async function setSessionConfigControl(runtime: RuntimeAdapter, request: 
     }
     case "thinking":
       return await setThinking(runtime, request.value);
-    case "_omp.steeringMode":
-      return await setSelectControl(runtime, request.value, STEERING_VALUES, "set_steering_mode", "_omp.steeringMode", "mode");
-    case "_omp.followUpMode":
-      return await setSelectControl(runtime, request.value, FOLLOW_UP_VALUES, "set_follow_up_mode", "_omp.followUpMode", "mode");
-    case "_omp.interruptMode":
-      return await setSelectControl(runtime, request.value, INTERRUPT_VALUES, "set_interrupt_mode", "_omp.interruptMode", "mode");
-    case "_omp.autoCompaction":
-      return await setAutoCompaction(runtime, request.value);
     default:
       throw invalidParams(`Unknown configId: ${request.configId}`);
   }
@@ -98,39 +83,6 @@ async function setThinking(runtime: RuntimeAdapter, value: unknown): Promise<Ses
   return after;
 }
 
-async function setSelectControl(
-  runtime: RuntimeAdapter,
-  value: unknown,
-  allowed: readonly string[],
-  method: string,
-  configId: string,
-  paramName: string,
-): Promise<SessionSetupState> {
-  if (typeof value !== "string" || !allowed.includes(value)) {
-    throw invalidParams(`Invalid value for ${configId}: ${String(value)}`);
-  }
-
-  await runtime.request(method, { [paramName]: value });
-  const after = await buildSessionSetupState(runtime);
-  const option = findConfigOption(after, configId);
-  if (option.type !== "select" || option.currentValue !== value) {
-    const actual = option.type === "select" ? option.currentValue : "<missing>";
-    throw new Error(`${method} succeeded but reread ${configId} currentValue was ${actual}, expected ${value}`);
-  }
-  return after;
-}
-
-async function setAutoCompaction(runtime: RuntimeAdapter, value: unknown): Promise<SessionSetupState> {
-  if (typeof value !== "boolean") throw invalidParams("_omp.autoCompaction value must be boolean");
-  await runtime.request("set_auto_compaction", { enabled: value });
-  const after = await buildSessionSetupState(runtime);
-  const option = findConfigOption(after, "_omp.autoCompaction");
-  if (option.type !== "boolean" || option.currentValue !== value) {
-    const actual = option.type === "boolean" ? String(option.currentValue) : "<missing>";
-    throw new Error(`set_auto_compaction succeeded but reread _omp.autoCompaction currentValue was ${actual}, expected ${value}`);
-  }
-  return after;
-}
 
 async function readSnapshot(runtime: RuntimeAdapter): Promise<Snapshot> {
   const rawState = await runtime.request("get_state");
@@ -178,39 +130,11 @@ function buildSetupState(state: OmpControlState, availableModels: OmpModelSummar
       currentValue: normalizeThinkingValue(state.thinkingLevel),
       options: thinkingOptions,
     },
-    buildFixedSelectOption("_omp.steeringMode", "Steering Mode", "_omp_interaction", state.steeringMode, STEERING_VALUES),
-    buildFixedSelectOption("_omp.followUpMode", "Follow-up Mode", "_omp_interaction", state.followUpMode, FOLLOW_UP_VALUES),
-    buildFixedSelectOption("_omp.interruptMode", "Interrupt Mode", "_omp_interaction", state.interruptMode, INTERRUPT_VALUES),
-    {
-      type: "boolean",
-      id: "_omp.autoCompaction",
-      name: "Auto Compaction",
-      category: "_omp_context",
-      currentValue: state.autoCompactionEnabled,
-    },
   ];
 
   return { models, modes: buildDefaultModeState(), configOptions };
 }
 
-function buildFixedSelectOption(id: string, name: string, category: string, currentValue: string, values: readonly string[]): SessionConfigOption {
-  const options: SelectOption[] = values.map((value) => ({ value, name: value }));
-  if (!values.includes(currentValue)) {
-    options.push({
-      value: currentValue,
-      name: currentValue,
-      description: "当前 runtime 值；不在当前 OMP adapter 已知支持范围内",
-    });
-  }
-  return {
-    type: "select",
-    id,
-    name,
-    category,
-    currentValue,
-    options,
-  };
-}
 
 function buildThinkingOptions(model: OmpModelSummary, currentValue: string): SelectOption[] {
   const options: SelectOption[] = buildSupportedThinkingValues(model).map((value) => ({ value, name: value }));
@@ -271,13 +195,7 @@ function decodeModelId(modelId: string): { provider: string; id: string } {
 function parseControlState(raw: unknown): OmpControlState {
   const record = requireRecord(raw, "get_state response");
   const model = parseModel(requireRecord(record.model, "get_state.model"), "get_state.model");
-  const state: OmpControlState = {
-    model,
-    steeringMode: requireString(record.steeringMode, "get_state.steeringMode"),
-    followUpMode: requireString(record.followUpMode, "get_state.followUpMode"),
-    interruptMode: requireString(record.interruptMode, "get_state.interruptMode"),
-    autoCompactionEnabled: requireBoolean(record.autoCompactionEnabled, "get_state.autoCompactionEnabled"),
-  };
+  const state: OmpControlState = { model };
   const thinkingLevel = record.thinkingLevel;
   if (typeof thinkingLevel === "string") state.thinkingLevel = thinkingLevel;
   else if (thinkingLevel === null) state.thinkingLevel = null;
@@ -326,10 +244,6 @@ function requireNonEmptyString(value: unknown, path: string): string {
   return text;
 }
 
-function requireBoolean(value: unknown, path: string): boolean {
-  if (typeof value !== "boolean") throw new Error(`Invalid ${path}: expected boolean`);
-  return value;
-}
 
 function findConfigOption(setup: SessionSetupState, id: string): SessionConfigOption {
   const option = setup.configOptions?.find((candidate) => candidate.id === id);

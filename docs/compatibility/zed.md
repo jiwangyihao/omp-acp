@@ -61,13 +61,13 @@ For the manual Zed release gate, follow `scripts/smoke-zed.md`.
 - text-only OMP JSONL history replay for `session/load`; unsupported roles/content fail the load rather than silently dropping history
 - ACP setup state for `models`, `modes`, and `configOptions`; supported session controls are `session/set_model`, `session/set_config_option`, and default-only `session/set_mode`
 
-Zed custom-agent model and thinking pickers come from the adapter's ACP setup response. The adapter builds those values from OMP `get_state` and `get_available_models`; thinking options are dynamically clipped to the current model metadata, so a model that does not support `xhigh` will not offer it and active setters reject unsupported values. `_omp.steeringMode`, `_omp.followUpMode`, `_omp.interruptMode`, and `_omp.autoCompaction` are OMP-specific ACP config options exposed by this adapter; they should not be treated as full parity with Zed registry agents or OpenCode UI behavior.
+Zed custom-agent model and thinking pickers come from the adapter's ACP setup response. The adapter builds those values from OMP `get_state` and `get_available_models`; thinking options are dynamically clipped to the current model metadata, so a model that does not support `xhigh` will not offer it and active setters reject unsupported values. OMP-specific runtime knobs such as steering mode, follow-up mode, interrupt mode, and auto compaction are intentionally not exposed as ACP config options, so Zed should only show model, thinking, and the default mode control for this adapter.
 
 ## Current limits
 
 - The package remains `private`; there is no supported `npx -y omp-acp` install path.
 - ACP `session/close` is not declared.
-- MCP HTTP/SSE, terminal delegation, filesystem delegation, permission request UX, audio prompt blocks, usage updates, sampling controls, service tiers, tools/MCP toggles, and multiple OMP agent modes are not declared.
+- MCP HTTP/SSE, terminal delegation, filesystem delegation, permission request UX, audio prompt blocks, usage updates, OMP-specific runtime knobs, sampling controls, service tiers, tools/MCP toggles, and multiple OMP agent modes are not declared.
 - Zed GUI has not manually validated `session/fork` or the Stage 8B session controls; the release gate still requires `scripts/smoke-zed.md`.
 - Slash commands, skills, and `omp.extensions` are discovered as metadata only; the adapter does not expose or execute them as ACP commands yet.
 - Extension UI requests fail the active prompt explicitly because adapter-side UI delegation is not implemented.
