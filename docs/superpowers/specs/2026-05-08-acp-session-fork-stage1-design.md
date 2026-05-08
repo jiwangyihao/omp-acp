@@ -119,8 +119,8 @@ export async function forkOmpSessionFile(options: ForkOmpSessionOptions): Promis
    - nested `message.sessionId`；
    - nested `message.sessionID`。
    其他未知字段保持原样，避免破坏 OMP 自有历史格式。
-6. 写入 `resolveAgentDir(agentDir)/sessions/<encodeOmpSessionCwd(cwd)>/<forkSessionId>.jsonl`。
-7. 如果目标文件已存在，失败而不是覆盖。
+6. 使用独占创建写入 `resolveAgentDir(agentDir)/sessions/<encodeOmpSessionCwd(cwd)>/<forkSessionId>.jsonl`，实现必须使用原子创建语义（例如 `writeFile(..., { flag: "wx" })` 或等价 `open("wx")` 后写入），禁止「先检查再覆盖写入」。
+7. 如果目标文件已存在，必须失败而不是覆盖；测试要证明已有文件内容保持不变。
 
 该 helper 是文件级 clone，不负责启动 runtime。
 
@@ -229,6 +229,8 @@ sessionCapabilities: {
   - fake runtime `switch_session` reject；
   - manager 中没有 fork id。
 
+测试门禁还必须同步更新 `package.json`：当前 `test` / `check` 脚本显式枚举测试文件，新增 `test/unit/acp/session-fork.test.ts` 后必须加入枚举列表，否则关键 fork handler 单测不会被 `npm run check` 执行。
+
 ### Unit: initialize capability
 
 文件：`test/unit/acp/initialize.test.ts`
@@ -246,10 +248,11 @@ sessionCapabilities: {
 
 - 在临时 `OMP_ACP_AGENT_DIR` 写源 session JSONL；
 - initialize；
-- `session/fork`；
-- 断言 response result 包含新 `sessionId`；
+- 发送 `session/fork`，用 `nextResponse(forkRequestId)` 断言 response id 与请求 id 一致、无 error，result 包含新 `sessionId`；
 - 读取 fork 后文件，确认 header `parentSession`；
-- 对 fork 后 session 发送 `session/prompt`，断言能收到 message update 和 `{ stopReason:"end_turn" }`。
+- 对 fork 后 session 发送 `session/prompt`；
+- 先用 `nextMessage()` 断言 forked prompt 的 `session/update` notification 归属 fork 后 `sessionId`，再用 `nextResponse(promptRequestId)` 断言 response id 与请求 id 一致且 result 为 `{ stopReason:"end_turn" }`；
+- 断言 `acp.stderr === ""`，保持 stdout 只含 ACP JSON-RPC/NDJSON frame 的既有 smoke 边界。
 
 ### Registry-style validation
 
@@ -276,6 +279,8 @@ sessionCapabilities: {
   - 自动化门禁快照重新记录。
 - `README.md`
   - Stage 状态补充 fork 已实现后再更新；spec 阶段不提前更新。
+- `docs/superpowers/plans/2026-05-07-omp-acp-implementation.md`
+  - 更新 Stage 6 / 后续阶段中关于 `session/fork` 不声明的旧边界，避免长期计划与 capability matrix、实际 `initialize` 输出矛盾。
 
 ## 开放问题与决策
 
@@ -297,6 +302,7 @@ sessionCapabilities: {
 - active prompt fork 被明确拒绝。
 - unknown source fork 返回明确 not found。
 - `initialize` 声明 fork，仍不声明 close/MCP/permission/terminal/filesystem/usage/audio。
-- `npm run check` 通过。
+- `npm run check` 通过，并确认新增 `test/unit/acp/session-fork.test.ts` 已接入 `package.json` 的显式测试枚举。
 - `npm run smoke:acp`、`npm run smoke:sdk-client`、`npm run validate:registry` 通过。
+- `npm run validate:standard` 通过；它是除 Zed 外的聚合自动门禁。
 - 如果 `npm run validate:acpx` 仍无 fork case，则结果不得被用来证明 fork 行为；fork 正确性以新增 unit/smoke/registry probe 为准。
