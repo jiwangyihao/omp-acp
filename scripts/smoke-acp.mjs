@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -29,7 +29,8 @@ try {
   assert.equal(initialize.result?.agentCapabilities?.mcpCapabilities?.sse, false);
   assert.equal(typeof initialize.result?.agentCapabilities?.sessionCapabilities?.list, "object");
   assert.equal(typeof initialize.result?.agentCapabilities?.sessionCapabilities?.resume, "object");
-  assert.equal(initialize.result?.agentCapabilities?.sessionCapabilities?.fork, undefined);
+  assert.equal(typeof initialize.result?.agentCapabilities?.sessionCapabilities?.fork, "object");
+  assert.equal(initialize.result?.agentCapabilities?.sessionCapabilities?.close, undefined);
 
   acp.send({ jsonrpc: "2.0", id: 2, method: "session/new", params: { cwd: repoRoot, mcpServers: [] } });
   const sessionNew = await acp.nextResponse(2);
@@ -51,6 +52,42 @@ try {
   const prompt = await acp.nextResponse(3);
   assert.equal(prompt.error, undefined);
   assert.deepEqual(prompt.result, { stopReason: "end_turn" });
+
+  const thoughtUpdate = await acp.nextMessage();
+  assert.equal(thoughtUpdate.method, "session/update");
+  assert.equal(thoughtUpdate.params?.sessionId, sessionNew.result.sessionId);
+  assert.equal(thoughtUpdate.params?.update?.sessionUpdate, "agent_thought_chunk");
+
+  const sourceSessionId = "raw-fork-source";
+  const sourceSessionDir = resolve(agentDir, "sessions", sourceSessionId);
+  await mkdir(sourceSessionDir, { recursive: true });
+  await writeFile(
+    resolve(sourceSessionDir, `${sourceSessionId}.jsonl`),
+    `${JSON.stringify({ type: "session", id: sourceSessionId, cwd: repoRoot, timestamp: "2026-05-08T00:00:00.000Z", title: "Raw fork source" })}\n${JSON.stringify({ type: "message", role: "user", content: "before fork", sessionId: sourceSessionId })}\n`,
+    "utf8",
+  );
+
+  acp.send({ jsonrpc: "2.0", id: 4, method: "session/fork", params: { sessionId: sourceSessionId, cwd: repoRoot, mcpServers: [] } });
+  const fork = await acp.nextResponse(4);
+  assert.equal(fork.error, undefined);
+  assert.equal(typeof fork.result?.sessionId, "string");
+  assert.notEqual(fork.result.sessionId, sourceSessionId);
+
+  acp.send({
+    jsonrpc: "2.0",
+    id: 5,
+    method: "session/prompt",
+    params: { sessionId: fork.result.sessionId, prompt: [{ type: "text", text: "fork smoke" }] },
+  });
+  const forkUpdate = await acp.nextMessage();
+  assert.equal(forkUpdate.method, "session/update");
+  assert.equal(forkUpdate.params?.sessionId, fork.result.sessionId);
+  assert.equal(forkUpdate.params?.update?.sessionUpdate, "agent_message_chunk");
+  assert.equal(forkUpdate.params?.update?.content?.text, "fork smoke");
+
+  const forkPrompt = await acp.nextResponse(5);
+  assert.equal(forkPrompt.error, undefined);
+  assert.deepEqual(forkPrompt.result, { stopReason: "end_turn" });
 
   await acp.close();
   assert.equal(acp.stderr, "");

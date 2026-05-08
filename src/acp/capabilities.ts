@@ -26,6 +26,7 @@ export function buildInitialAgentCapabilities(): AgentCapabilities {
     sessionCapabilities: {
       list: {},
       resume: {},
+      fork: {},
     },
   };
 }

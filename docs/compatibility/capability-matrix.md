@@ -16,14 +16,14 @@
 | 能力 | 当前状态 | 声明策略 | 验证要求 |
 |---|---|---|---|
 | ACP stdio transport | 已实现 | 内部可用；发布仍需通过 release checklist | `test/smoke/acp-stdio.test.ts` + `scripts/smoke-acp.mjs` |
-| `initialize` | 已实现 | 声明已实现的 baseline session/new、text/resource_link/image/embedded prompt、session/list、text-history session/load、session/resume；`promptCapabilities.audio` 仍为 `false`，MCP/fork/close 仍不声明或为 `false` | `test/unit/acp/initialize.test.ts` + smoke tests |
-| `session/new` | 已实现 | baseline ACP method 可用；不声明 session fork/close | `test/smoke/session-prompt.test.ts` |
+| `initialize` | 已实现 | 声明已实现的 baseline session/new、text/resource_link/image/embedded prompt、session/list、text-history session/load、session/resume、session/fork；`promptCapabilities.audio` 仍为 `false`，MCP/close 仍不声明或为 `false` | `test/unit/acp/initialize.test.ts` + smoke tests |
+| `session/new` | 已实现 | baseline ACP method 可用；不声明 session close | `test/smoke/session-prompt.test.ts` |
 | `session/prompt` text/resource_link | 已实现 | baseline text 与 resource_link 可用 | `test/unit/translate/prompt.test.ts` + `test/smoke/session-prompt.test.ts` |
 | `session/cancel` | 已实现 | baseline ACP notification 可用；best-effort 传递 runtime cancel 并本地抑制 late chunks | `test/unit/acp/session-handlers.test.ts` + `test/smoke/session-prompt.test.ts` |
 | `session/list` | 已实现 | 声明 `sessionCapabilities.list:{}`；按 OMP session JSONL header 扫描并支持 cwd filter | `test/unit/runtime/omp/sessions.test.ts` + `test/unit/acp/session-list-load.test.ts` + `test/smoke/session-prompt.test.ts` |
 | `session/load` | 已实现 | 声明 `loadSession:true`；支持 text-only OMP JSONL history replay，unsupported history fails load rather than silently dropping | `test/unit/acp/session-list-load.test.ts` + `test/smoke/session-prompt.test.ts` |
 | `session/close` | 不支持 | SDK 0.21.0 已暴露 agent-side `session/close` method，但 adapter 尚无可防御的 OMP close 语义；不声明 | SDK method inventory + capability test |
-| `session/fork` | 不支持 | ACP fork request 只有 source session id，OMP branch/new-session 语义无法保证等价 fork；不声明 | Stage 6 boundary spec |
+| `session/fork` | 已实现 | 声明 `sessionCapabilities.fork:{}`；第一阶段从源 OMP session 当前持久化 head fork 出新 session；不支持 message-bound fork / `_meta.messageId`；active prompt 下拒绝 | `forkOmpSessionFile` unit + `test/unit/acp/session-fork.test.ts` + `test/smoke/session-prompt.test.ts` + `scripts/smoke-acp.mjs` + `scripts/smoke-sdk-client.mjs` + `scripts/probe-registry-matrix.mjs` |
 | `session/resume` | 已实现 | 声明 `sessionCapabilities.resume:{}`；switch OMP session path，不 replay history | `test/unit/acp/session-resume.test.ts` + `test/smoke/session-prompt.test.ts` |
 | `agent_message_chunk` | 已实现 | runtime `message_update` 文本输出映射为 ACP message chunk | `test/unit/translate/events-message.test.ts` + `test/smoke/session-prompt.test.ts` |
 | `agent_thought_chunk` | 已实现 | runtime thought/reasoning 标记映射为 ACP thought chunk | `test/unit/translate/events-message.test.ts` + `test/smoke/session-prompt.test.ts` |

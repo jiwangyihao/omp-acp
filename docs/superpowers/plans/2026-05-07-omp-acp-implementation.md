@@ -407,7 +407,7 @@ node scripts/smoke-acp.mjs
 
 - [x] **6A：session lifecycle**
   - 实现：`session/resume`（switch OMP session path, no history replay）。
-  - 不声明：`session/fork`（ACP request 与 OMP branch/new-session 语义不足以保证等价 fork）、`session/close`（SDK 0.21.0 已有 agent-side method，但 adapter 尚无可防御的 OMP close 语义）。
+  - 当时不声明：`session/fork`（此前认为 ACP request 与 OMP branch/new-session 语义不足以保证等价 fork）、`session/close`（SDK 0.21.0 已有 agent-side method，但 adapter 尚无可防御的 OMP close 语义）。经 OpenCode/ACP SDK 0.21.0 重新评估后，后续 Stage 8A 已实现标准 ACP fork 第一阶段；Stage 6A 的结论保留为当时边界。
 - [x] **6B：embedded context 与 image prompt**
   - 文件：`src/translate/prompt.ts`
   - 验收：text、resource_link、image、embedded text/blob context 均有转换测试；audio/unknown resource 返回明确错误。
@@ -450,6 +450,28 @@ node scripts/smoke-acp.mjs
 - [x] capability matrix 与实际 `initialize` 输出一致；
 - [x] `private: true` 只在决定发布时移除；
 - [x] README 不包含未发布 npm 包的误导性 `npx -y omp-acp` 指令。
+
+### Stage 8A：`session/fork` 第一阶段
+
+**状态：** 已完成。
+
+**核心行为：**
+
+- `initialize` 声明 `sessionCapabilities.fork:{}`；仍不声明 `session/close`、MCP HTTP/SSE、permission、filesystem/terminal delegation、usage update、audio prompt、`session/stop`、`session/set_model`。
+- `session/fork` 从源 OMP session 当前已持久化 head 复制 JSONL，创建新 session 文件并写入 `parentSession`。
+- fork 后通过现有 `switch_session` runtime contract 绑定新 session，新 session 可继续 `session/prompt`。
+- 源 session 有 active prompt 或 fork guard 冲突时拒绝，避免复制未稳定落盘状态。
+- 第一阶段不支持 message-bound fork，不读取 `_meta.messageId` / `_meta.messageID`。
+
+**验证命令：**
+
+- `node --import tsx --test --test-concurrency=1 test/unit/runtime/omp/sessions.test.ts`
+- `node --import tsx --test --test-concurrency=1 test/unit/acp/session-fork.test.ts`
+- `node --import tsx --test --test-concurrency=1 test/unit/acp/initialize.test.ts test/unit/acp/session-fork.test.ts test/smoke/acp-stdio.test.ts`
+- `npm run smoke:acp`
+- `npm run smoke:sdk-client`
+- `npm run validate:registry`
+- `npm run validate:standard`
 
 ---
 

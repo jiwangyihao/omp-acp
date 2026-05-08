@@ -43,7 +43,7 @@ try {
   assert.deepEqual(capabilities, {
     loadSession: true,
     sessionList: true,
-    sessionFork: false,
+    sessionFork: true,
     sessionResume: true,
     sessionStop: false,
     setModel: false,
@@ -61,7 +61,8 @@ try {
   }
 
   assert.equal(probes["session/list"].outcome.status, "success");
-  assert.equal(probes["session/fork"].outcome.status, "method_not_found");
+  assert.equal(probes["session/fork"].outcome.status, "success");
+  assert.equal(typeof probes["session/fork"].message.result.sessionId, "string");
   assert.equal(probes["session/resume"].outcome.status, "success");
   assert.equal(probes["session/stop"].outcome.status, "method_not_found");
   assert.equal(probes["session/set_model"].outcome.status, "method_not_found");
@@ -291,7 +292,7 @@ function probeParamsForMethod(method, sessionId, resumeSessionId) {
     case "session/resume":
       return { sessionId: resumeSessionId, cwd: repoRoot, mcpServers: [] };
     case "session/fork":
-      return { sessionId, cwd: repoRoot, mcpServers: [] };
+      return { sessionId: resumeSessionId, cwd: repoRoot, mcpServers: [] };
     case "session/stop":
       return { sessionId };
     case "session/set_model":

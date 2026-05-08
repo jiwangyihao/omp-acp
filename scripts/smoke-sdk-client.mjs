@@ -39,7 +39,7 @@ try {
   assert.equal(initialize.agentCapabilities?.mcpCapabilities?.sse, false);
   assert.deepEqual(initialize.agentCapabilities?.sessionCapabilities?.list, {});
   assert.deepEqual(initialize.agentCapabilities?.sessionCapabilities?.resume, {});
-  assert.equal(initialize.agentCapabilities?.sessionCapabilities?.fork, undefined);
+  assert.deepEqual(initialize.agentCapabilities?.sessionCapabilities?.fork, {});
   assert.equal(initialize.agentCapabilities?.sessionCapabilities?.close, undefined);
   assert.equal(initialize.authMethods, undefined);
 
@@ -61,6 +61,20 @@ try {
       },
     ],
   });
+
+  const fork = await acp.request("session/fork", () => acp.connection.unstable_forkSession({ sessionId: "sdk-smoke-session", cwd: repoRoot, mcpServers: [] }));
+  assert.equal(typeof fork.sessionId, "string");
+  assert.notEqual(fork.sessionId, "sdk-smoke-session");
+
+  const forkPrompt = await acp.request("session/prompt after fork", () => acp.connection.prompt({
+    sessionId: fork.sessionId,
+    prompt: [{ type: "text", text: "after sdk fork" }],
+  }));
+  assert.deepEqual(forkPrompt, { stopReason: "end_turn" });
+  assert.deepEqual(updates.splice(0), [
+    expectedTextUpdate(fork.sessionId, "agent_message_chunk", "after sdk fork"),
+    expectedTextUpdate(fork.sessionId, "agent_thought_chunk", "thinking"),
+  ]);
 
   const session = await acp.request("session/new", () => acp.connection.newSession({ cwd: repoRoot, mcpServers: [] }));
   assert.equal(typeof session.sessionId, "string");

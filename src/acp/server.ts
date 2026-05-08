@@ -4,6 +4,7 @@ import {
   type Agent,
   type AuthenticateRequest,
   type CancelNotification,
+  type ForkSessionRequest,
   type LoadSessionRequest,
   type ListSessionsRequest,
   type NewSessionRequest,
@@ -16,6 +17,7 @@ import { startOmpRpcClient } from "../runtime/omp/rpc-client.ts";
 import { SessionManager, SessionManagerError, type RuntimeFactory } from "../session/manager.ts";
 import { handleSessionCancel } from "./handlers/session-cancel.ts";
 import { handleSessionList } from "./handlers/session-list.ts";
+import { handleSessionFork } from "./handlers/session-fork.ts";
 import { handleSessionLoad } from "./handlers/session-load.ts";
 import { handleSessionNew } from "./handlers/session-new.ts";
 import { handleSessionPrompt } from "./handlers/session-prompt.ts";
@@ -65,6 +67,10 @@ export function createOmpAcpAgent(
 
     async resumeSession(params: ResumeSessionRequest) {
       return handleSessionResume(params, manager, handlerOptions);
+    },
+
+    async unstable_forkSession(params: ForkSessionRequest) {
+      return handleSessionFork(params, manager, handlerOptions);
     },
 
     async authenticate(_params: AuthenticateRequest) {

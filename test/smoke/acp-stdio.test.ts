@@ -251,7 +251,7 @@ test("initialize returns implemented capabilities over stdio", async () => {
     assert.equal(result.agentCapabilities?.promptCapabilities?.embeddedContext, true);
     assert.equal(typeof result.agentCapabilities?.sessionCapabilities?.list, "object");
     assert.equal(typeof result.agentCapabilities?.sessionCapabilities?.resume, "object");
-    assert.equal(result.agentCapabilities?.sessionCapabilities?.fork, undefined);
+    assert.equal(typeof result.agentCapabilities?.sessionCapabilities?.fork, "object");
     assert.equal(acp.stderr, "");
   });
 });

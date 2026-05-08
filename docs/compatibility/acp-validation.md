@@ -23,6 +23,7 @@
 - `session/prompt`：接收并校验 SDK 解析后的 `session/update` notification；
 - `session/list`：校验 OMP JSONL session discovery；
 - `session/resume`：确认 resume 不回放历史，后续 prompt 可继续；
+- `session/fork`：从预置源 session fork 出新 session，并确认 fork 后 session 可继续 prompt；
 - stdout 纯净性：adapter stderr 必须为空，协议输出由 SDK stream 消费。
 
 这不是官方 conformance suite，但它使用官方 SDK 的连接层和 notification schema validation，比只使用手写 JSON-RPC harness 更接近 ACP 官方客户端语义。
@@ -34,6 +35,7 @@
 - build output 是否可启动；
 - stdout 是否只包含 JSON-RPC frame；
 - initialize/new/prompt 的最小端到端路径；
+- `session/fork` 与 fork 后 prompt 的端到端路径；
 - adapter 进程 stderr 是否保持为空。
 
 两类 smoke 互补：SDK smoke 降低协议理解偏差，raw smoke 保留低层传输和 stdout 污染检测。
@@ -43,10 +45,11 @@
 该脚本先构建 `dist/index.js`，再使用 raw JSON-RPC/NDJSON harness 按 ACP Registry Protocol Matrix 的风格执行：
 
 - `initialize` 使用 registry matrix 风格的 `clientInfo`、terminal 与 fs capability 参数；
-- 校验当前 truthful capability signal：`loadSession:true`、`sessionCapabilities.list:{}`、`sessionCapabilities.resume:{}`，并确认 fork/stop/set_model 未声明；
+- 校验当前 truthful capability signal：`loadSession:true`、`sessionCapabilities.list:{}`、`sessionCapabilities.resume:{}`、`sessionCapabilities.fork:{}`，并确认 stop/set_model 未声明；
 - `session/new` 基础创建通过；
 - `session/list` 与一个预置 OMP JSONL session 的 `session/resume` probe 通过；
-- `session/fork`、`session/stop`、`session/set_model` 返回 `method_not_found`，与未声明能力一致；
+- `session/fork` probe 成功，并确认 fork 后 session 可继续 prompt；
+- `session/stop`、`session/set_model` 返回 `method_not_found`，与未声明能力一致；
 - stdout 逐行校验为 JSON-RPC frame，避免 adapter stdout 污染。
 
 这不是直接运行 `agentclientprotocol/registry` CI；当前包仍为 `private`，没有 registry manifest，也没有实现 ACP auth flow。它用于在本地覆盖 registry matrix 最关键的 capability discovery 与 unsupported-method 边界。

@@ -56,13 +56,15 @@ For the manual Zed release gate, follow `scripts/smoke-zed.md`.
 - message and thought chunks
 - tool calls, tool updates, failed/cancelled tool statuses, and structured diff content for tested OMP event shapes
 - `session/list`, `session/load`, and `session/resume`
+- `session/fork` first phase: forks from the source OMP session's currently persisted head; message-bound fork and `_meta.messageId` / `_meta.messageID` are not supported
 - text-only OMP JSONL history replay for `session/load`; unsupported roles/content fail the load rather than silently dropping history
 
 ## Current limits
 
 - The package remains `private`; there is no supported `npx -y omp-acp` install path.
-- `session/fork` and ACP `session/close` are not declared.
+- ACP `session/close` is not declared.
 - MCP HTTP/SSE, terminal delegation, filesystem delegation, permission request UX, audio prompt blocks, and usage updates are not declared.
+- Zed GUI has not manually validated `session/fork`; the release gate still requires `scripts/smoke-zed.md`.
 - Slash commands, skills, and `omp.extensions` are discovered as metadata only; the adapter does not expose or execute them as ACP commands yet.
 - Extension UI requests fail the active prompt explicitly because adapter-side UI delegation is not implemented.
 

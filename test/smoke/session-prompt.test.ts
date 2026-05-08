@@ -363,6 +363,38 @@ serialSmokeTest("session/list and session/load use OMP agent dir and keep stdout
   }, { OMP_ACP_AGENT_DIR: agentDir });
 });
 
+serialSmokeTest("session/fork clones an OMP session and allows prompt on the fork", async () => {
+  const agentDir = await mkdtemp(join(tmpdir(), "omp-acp-smoke-fork-agent-"));
+  const cwd = repoRoot;
+  await writeSmokeSession(agentDir, cwd, "fork-source", [
+    { type: "session", id: "fork-source", cwd, timestamp: "2026-05-08T01:00:00.000Z", title: "Fork Source" },
+    { type: "message", role: "user", content: "before fork", timestamp: "2026-05-08T01:01:00.000Z" },
+  ]);
+
+  await withAcpSubprocess("session-happy", async (acp) => {
+    acp.send(initializeRequest(60));
+    await acp.nextResponse(60);
+
+    acp.send({ jsonrpc: "2.0", id: 61, method: "session/fork", params: { sessionId: "fork-source", cwd, mcpServers: [] } });
+    const forkResponse = await acp.nextResponse(61);
+    assert.equal(forkResponse.error, undefined);
+    assert.equal(forkResponse.id, 61);
+    const forkSessionId = (forkResponse.result as { sessionId?: unknown }).sessionId;
+    assert.equal(typeof forkSessionId, "string");
+
+    acp.send({ jsonrpc: "2.0", id: 62, method: "session/prompt", params: { sessionId: forkSessionId, prompt: [{ type: "text", text: "after fork" }] } });
+    const promptUpdate = await acp.nextMessage();
+    assert.equal((promptUpdate.params as { sessionId?: string }).sessionId, forkSessionId);
+    assert.equal(updateKind(promptUpdate), "agent_message_chunk");
+    assert.equal(textFromUpdate(promptUpdate), "after fork");
+
+    const promptResponse = await acp.nextResponse(62);
+    assert.equal(promptResponse.id, 62);
+    assert.deepEqual(promptResponse.result, { stopReason: "end_turn" });
+    assert.equal(acp.stderr, "");
+  }, { OMP_ACP_AGENT_DIR: agentDir });
+});
+
 serialSmokeTest("session/resume switches to an existing OMP session without replay and permits the next prompt", async () => {
   const agentDir = await mkdtemp(join(tmpdir(), "omp-acp-smoke-resume-agent-"));
   const cwd = repoRoot;
