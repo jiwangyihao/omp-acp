@@ -205,6 +205,19 @@ test("cancel while prompt pending returns cancelled, requests runtime cancel, su
   assert.equal(runtime.listeners.size, 0);
 });
 
+test("cancelled prompt cleanup is bounded when runtime prompt never settles", async () => {
+  const { manager, runtime } = await createSession();
+
+  const promptPromise = handleSessionPrompt(promptRequest(), { manager, connection: new FakeConnection() });
+  await handleSessionCancel({ sessionId: "session-1" }, manager);
+
+  assert.deepEqual(await promptPromise, { stopReason: "cancelled" });
+  await waitForCondition(() => runtime.listeners.size === 0);
+
+  assert.equal(runtime.closeCalls, 1);
+  assert.equal(runtime.listeners.size, 0);
+});
+
 test("cancelled prompt retains ownership until runtime prompt settles", async () => {
   const { manager, connection, runtime } = await createSession();
 
@@ -258,6 +271,26 @@ test("normal prompt drains updates appended while earlier deliveries are pending
       { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "second" } },
     ],
   );
+});
+
+test("cancel during update drain returns cancelled and releases prompt", async () => {
+  const { manager, connection, runtime } = await createSession();
+
+  const promptPromise = handleSessionPrompt(promptRequest(), { manager, connection });
+  runtime.emit({ type: "event", eventType: "message_update", raw: { content: "first" } });
+  runtime.promptDeferreds[0]!.resolve({});
+  await new Promise<void>((resolve) => setImmediate(resolve));
+
+  await handleSessionCancel({ sessionId: "session-1" }, manager);
+
+  assert.deepEqual(await promptPromise, { stopReason: "cancelled" });
+  assert.equal(runtime.listeners.size, 0);
+
+  connection.updateDeferreds[0]!.resolve();
+  const nextPrompt = handleSessionPrompt(promptRequest({ prompt: [{ type: "text", text: "next" }] }), { manager, connection });
+  assert.equal(runtime.promptDeferreds.length, 2);
+  runtime.promptDeferreds[1]!.resolve({});
+  assert.deepEqual(await nextPrompt, { stopReason: "end_turn" });
 });
 
 test("event translation failure stops accepting same-turn assistant updates", async () => {
