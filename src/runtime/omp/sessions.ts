@@ -1,4 +1,4 @@
-import { readdir, readFile, stat } from "node:fs/promises";
+import { mkdir, open, readdir, readFile, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { SessionUpdate } from "@agentclientprotocol/sdk";
@@ -27,6 +27,27 @@ export type ListOmpSessionsResult = {
     skipped: OmpSessionDiagnostic[];
   };
 };
+
+export type ForkOmpSessionOptions = {
+  sourcePath: string;
+  sourceSessionId: string;
+  forkSessionId: string;
+  cwd: string;
+  agentDir?: string;
+  now?: () => Date;
+};
+
+export type ForkOmpSessionResult = {
+  sessionId: string;
+  path: string;
+};
+
+export class OmpSessionForkSourceError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "OmpSessionForkSourceError";
+  }
+}
 
 type OmpSessionHeader = {
   type: "session";
@@ -77,6 +98,32 @@ export async function findOmpSessionById(
 ): Promise<OmpSessionInfo | undefined> {
   const result = await listOmpSessions(options);
   return result.sessions.find((session) => session.sessionId === sessionId);
+}
+
+export async function forkOmpSessionFile(options: ForkOmpSessionOptions): Promise<ForkOmpSessionResult> {
+  const targetDir = join(resolveAgentDir(options.agentDir), "sessions", encodeOmpSessionCwd(options.cwd));
+  const targetPath = join(targetDir, `${options.forkSessionId}.jsonl`);
+  const sourceContent = await readFile(options.sourcePath, "utf8");
+  const lines = buildForkSessionLines(sourceContent, options);
+
+  await mkdir(targetDir, { recursive: true });
+  let file;
+  try {
+    file = await open(targetPath, "wx");
+  } catch (error) {
+    if (isNodeError(error) && error.code === "EEXIST") {
+      throw new Error(`OMP fork session file already exists: ${targetPath}`, { cause: error });
+    }
+    throw error;
+  }
+
+  try {
+    await file.writeFile(`${lines.join("\n")}\n`, "utf8");
+  } finally {
+    await file.close();
+  }
+
+  return { sessionId: options.forkSessionId, path: targetPath };
 }
 
 export async function loadOmpSessionHistory(path: string): Promise<SessionUpdate[]> {
@@ -145,6 +192,108 @@ async function parseSessionFileMetadata(path: string): Promise<
     header: firstValidObject,
     updatedAt: lastTimestamp ?? firstValidObject.timestamp ?? (await stat(path)).mtime.toISOString(),
   };
+}
+
+function buildForkSessionLines(sourceContent: string, options: ForkOmpSessionOptions): string[] {
+  const sourceLines = sourceContent.split(/\r?\n/);
+  const { header, headerIndex } = parseForkSourceHeader(sourceLines, options);
+  const forkHeader: Record<string, unknown> = {
+    type: "session",
+    id: options.forkSessionId,
+    cwd: options.cwd,
+    timestamp: (options.now ?? (() => new Date()))().toISOString(),
+    parentSession: options.sourceSessionId,
+  };
+  if (typeof header.title === "string" && header.title.length > 0) {
+    forkHeader.title = `${header.title} (fork)`;
+  }
+
+  const forkLines = [JSON.stringify(forkHeader)];
+  for (const line of sourceLines.slice(headerIndex + 1)) {
+    if (line.trim().length === 0) {
+      continue;
+    }
+
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(line);
+    } catch {
+      forkLines.push(line);
+      continue;
+    }
+
+    if (!isRecord(parsed)) {
+      forkLines.push(line);
+      continue;
+    }
+
+    forkLines.push(JSON.stringify(rewriteForkEntrySessionIds(parsed, options.sourceSessionId, options.forkSessionId)));
+  }
+
+  return forkLines;
+}
+
+function parseForkSourceHeader(
+  lines: string[],
+  options: ForkOmpSessionOptions,
+): { header: OmpSessionHeader; headerIndex: number } {
+  for (const [index, line] of lines.entries()) {
+    if (line.trim().length === 0) {
+      continue;
+    }
+
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(line);
+    } catch {
+      continue;
+    }
+
+    if (!isRecord(parsed)) {
+      continue;
+    }
+
+    if (!isSessionHeader(parsed)) {
+      throw new OmpSessionForkSourceError("OMP fork source first JSON object is not a session header");
+    }
+    if (parsed.id !== options.sourceSessionId) {
+      throw new OmpSessionForkSourceError(`OMP fork source session id mismatch: ${parsed.id}`);
+    }
+    if (parsed.cwd !== options.cwd) {
+      throw new OmpSessionForkSourceError(`OMP fork source cwd mismatch: ${parsed.cwd}`);
+    }
+
+    return { header: parsed, headerIndex: index };
+  }
+
+  throw new OmpSessionForkSourceError("OMP fork source missing session header");
+}
+
+function rewriteForkEntrySessionIds(
+  entry: Record<string, unknown>,
+  sourceSessionId: string,
+  forkSessionId: string,
+): Record<string, unknown> {
+  const rewritten = { ...entry };
+  if (rewritten.sessionId === sourceSessionId) {
+    rewritten.sessionId = forkSessionId;
+  }
+  if (rewritten.sessionID === sourceSessionId) {
+    rewritten.sessionID = forkSessionId;
+  }
+
+  if (isRecord(rewritten.message)) {
+    const message = { ...rewritten.message };
+    if (message.sessionId === sourceSessionId) {
+      message.sessionId = forkSessionId;
+    }
+    if (message.sessionID === sourceSessionId) {
+      message.sessionID = forkSessionId;
+    }
+    rewritten.message = message;
+  }
+
+  return rewritten;
 }
 
 async function findJsonlFiles(root: string): Promise<string[]> {

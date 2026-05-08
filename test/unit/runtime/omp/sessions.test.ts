@@ -1,12 +1,14 @@
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, stat, utimes, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, stat, utimes, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { describe, it } from "node:test";
 
 import {
   encodeOmpSessionCwd,
+  forkOmpSessionFile,
   findOmpSessionById,
+  OmpSessionForkSourceError,
   listOmpSessions,
   loadOmpSessionHistory,
 } from "../../../../src/runtime/omp/sessions.ts";
@@ -98,6 +100,124 @@ describe("findOmpSessionById", () => {
     assert.equal(found?.cwd, "/project/a");
     assert.equal(await findOmpSessionById("target", { cwd: "/project/b", agentDir }), undefined);
     assert.equal(await findOmpSessionById("missing", { agentDir }), undefined);
+  });
+});
+
+describe("forkOmpSessionFile", () => {
+  it("clones a session at head with parentSession metadata", async () => {
+    const agentDir = await tempAgentDir();
+    const sourcePath = await writeSessionFile(agentDir, "source", "source.jsonl", [
+      { type: "session", id: "source-session", cwd: "/project", timestamp: "2026-05-08T00:00:00.000Z", title: "Source" },
+      { type: "message", role: "user", content: "hello", sessionId: "source-session", sessionID: "other-session", unknown: "source-session" },
+      { type: "message", message: { role: "assistant", content: "world", sessionId: "source-session", sessionID: "source-session" } },
+    ]);
+
+    const result = await forkOmpSessionFile({
+      sourcePath,
+      sourceSessionId: "source-session",
+      forkSessionId: "fork-session",
+      cwd: "/project",
+      agentDir,
+      now: () => new Date("2026-05-08T01:00:00.000Z"),
+    });
+
+    const expectedPath = join(agentDir, "sessions", encodeOmpSessionCwd("/project"), "fork-session.jsonl");
+    assert.deepEqual(result, { sessionId: "fork-session", path: expectedPath });
+
+    const lines = (await readFile(result.path, "utf8")).trim().split(/\r?\n/).map((line) => JSON.parse(line));
+    assert.deepEqual(lines, [
+      {
+        type: "session",
+        id: "fork-session",
+        cwd: "/project",
+        timestamp: "2026-05-08T01:00:00.000Z",
+        parentSession: "source-session",
+        title: "Source (fork)",
+      },
+      { type: "message", role: "user", content: "hello", sessionId: "fork-session", sessionID: "other-session", unknown: "source-session" },
+      { type: "message", message: { role: "assistant", content: "world", sessionId: "fork-session", sessionID: "fork-session" } },
+    ]);
+  });
+
+  it("rejects invalid source headers", async (t) => {
+    const cases = [
+      { name: "missing header", entries: [{ type: "message", role: "user", content: "no header" }] },
+      { name: "non-session header", entries: [{ type: "metadata", id: "source-session", cwd: "/project" }] },
+      { name: "mismatched id", entries: [{ type: "session", id: "other-session", cwd: "/project" }] },
+      { name: "mismatched cwd", entries: [{ type: "session", id: "source-session", cwd: "/other" }] },
+    ];
+
+    for (const testCase of cases) {
+      await t.test(testCase.name, async () => {
+        const agentDir = await tempAgentDir();
+        const sourcePath = await writeSessionFile(agentDir, "source", "source.jsonl", testCase.entries);
+
+        await assert.rejects(
+          forkOmpSessionFile({
+            sourcePath,
+            sourceSessionId: "source-session",
+            forkSessionId: "fork-session",
+            cwd: "/project",
+            agentDir,
+          }),
+          OmpSessionForkSourceError,
+        );
+      });
+    }
+  });
+
+  it("uses exclusive creation and does not overwrite existing fork files", async () => {
+    const agentDir = await tempAgentDir();
+    const sourcePath = await writeSessionFile(agentDir, encodeOmpSessionCwd("/project"), "source.jsonl", [
+      { type: "session", id: "source-session", cwd: "/project" },
+      { type: "message", role: "user", content: "hello" },
+    ]);
+    const existingPath = await writeSessionFile(agentDir, encodeOmpSessionCwd("/project"), "fork-session.jsonl", [
+      { type: "session", id: "fork-session", cwd: "/project", title: "Existing" },
+    ]);
+
+    await assert.rejects(
+      forkOmpSessionFile({
+        sourcePath,
+        sourceSessionId: "source-session",
+        forkSessionId: "fork-session",
+        cwd: "/project",
+        agentDir,
+      }),
+      /already exists/,
+    );
+    assert.match(await readFile(existingPath, "utf8"), /Existing/);
+  });
+
+  it("preserves fork metadata only as private file content", async () => {
+    const agentDir = await tempAgentDir();
+    const sourcePath = await writeSessionFile(agentDir, encodeOmpSessionCwd("/project"), "source.jsonl", [
+      { type: "session", id: "source-session", cwd: "/project", title: "Source" },
+      { type: "message", role: "user", content: "hello" },
+    ]);
+
+    const result = await forkOmpSessionFile({
+      sourcePath,
+      sourceSessionId: "source-session",
+      forkSessionId: "fork-session",
+      cwd: "/project",
+      agentDir,
+      now: () => new Date("2026-05-08T01:00:00.000Z"),
+    });
+
+    const [headerLine] = (await readFile(result.path, "utf8")).split(/\r?\n/);
+    assert.equal(JSON.parse(headerLine).parentSession, "source-session");
+
+    const listed = await listOmpSessions({ cwd: "/project", agentDir });
+    const fork = listed.sessions.find((session) => session.sessionId === "fork-session");
+    assert.deepEqual(fork, {
+      sessionId: "fork-session",
+      cwd: "/project",
+      title: "Source (fork)",
+      updatedAt: "2026-05-08T01:00:00.000Z",
+      path: result.path,
+    });
+    assert.equal(Object.hasOwn(fork ?? {}, "parentSession"), false);
   });
 });
 
