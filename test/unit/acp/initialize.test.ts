@@ -17,20 +17,20 @@ const packageJson = JSON.parse(readFileSync(packageJsonPath, "utf8")) as {
   version: string;
 };
 
-test("buildInitialAgentCapabilities declares implemented session list and load only", () => {
+test("buildInitialAgentCapabilities declares implemented rich prompt and session capabilities only", () => {
   const capabilities = buildInitialAgentCapabilities();
 
   assert.equal(capabilities.loadSession, true);
   assert.deepEqual(capabilities.promptCapabilities, {
-    image: false,
+    image: true,
     audio: false,
-    embeddedContext: false,
+    embeddedContext: true,
   });
   assert.deepEqual(capabilities.mcpCapabilities, {
     http: false,
     sse: false,
   });
-  assert.deepEqual(capabilities.sessionCapabilities, { list: {} });
+  assert.deepEqual(capabilities.sessionCapabilities, { list: {}, resume: {} });
 });
 
 
@@ -65,11 +65,11 @@ test("handleInitialize does not declare unimplemented capabilities as true", asy
 
   assert.equal(capabilities?.loadSession, true);
   assert.deepEqual(capabilities?.sessionCapabilities?.list, {});
+  assert.deepEqual(capabilities?.sessionCapabilities?.resume, {});
   assert.equal(Object.hasOwn(capabilities?.sessionCapabilities ?? {}, "fork"), false);
-  assert.equal(Object.hasOwn(capabilities?.sessionCapabilities ?? {}, "resume"), false);
   assert.notEqual(capabilities?.mcpCapabilities?.http, true);
   assert.notEqual(capabilities?.mcpCapabilities?.sse, true);
-  assert.notEqual(capabilities?.promptCapabilities?.image, true);
+  assert.equal(capabilities?.promptCapabilities?.image, true);
   assert.notEqual(capabilities?.promptCapabilities?.audio, true);
-  assert.notEqual(capabilities?.promptCapabilities?.embeddedContext, true);
+  assert.equal(capabilities?.promptCapabilities?.embeddedContext, true);
 });

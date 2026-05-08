@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { LoadSessionRequest, NewSessionRequest, NewSessionResponse } from "@agentclientprotocol/sdk";
+import type { LoadSessionRequest, NewSessionRequest, NewSessionResponse, ResumeSessionRequest } from "@agentclientprotocol/sdk";
 import type { RuntimeAdapter } from "../runtime/RuntimeAdapter.ts";
 import { PromptCancellation } from "./cancellation.ts";
 
@@ -56,7 +56,7 @@ export class SessionManager {
 
   async createSessionWithId(
     sessionId: string,
-    params: NewSessionRequest | LoadSessionRequest,
+    params: NewSessionRequest | LoadSessionRequest | ResumeSessionRequest,
     beforePublish?: BeforePublishRuntime,
   ): Promise<SessionRecord> {
     if (this.#sessions.has(sessionId)) {
@@ -65,7 +65,7 @@ export class SessionManager {
 
     const input: RuntimeFactoryInput = {
       cwd: params.cwd,
-      mcpServers: params.mcpServers,
+      mcpServers: params.mcpServers ?? [],
       sessionId,
     };
     const runtime = this.#runtimeFactory(input);
@@ -93,7 +93,7 @@ export class SessionManager {
     const session: SessionRecord = {
       sessionId,
       cwd: params.cwd,
-      mcpServers: params.mcpServers,
+      mcpServers: params.mcpServers ?? [],
       runtime,
       activePrompt: undefined,
     };

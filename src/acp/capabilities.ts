@@ -17,9 +17,9 @@ export function buildInitialAgentCapabilities(): AgentCapabilities {
   return {
     loadSession: true,
     promptCapabilities: {
-      image: false,
+      image: true,
       audio: false,
-      embeddedContext: false,
+      embeddedContext: true,
     },
     mcpCapabilities: {
       http: false,
@@ -27,6 +27,7 @@ export function buildInitialAgentCapabilities(): AgentCapabilities {
     },
     sessionCapabilities: {
       list: {},
+      resume: {},
     },
   };
 }

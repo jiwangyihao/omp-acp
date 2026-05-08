@@ -326,6 +326,62 @@ test("session/list and session/load use OMP agent dir and keep stdout JSON-RPC o
   }, { OMP_ACP_AGENT_DIR: agentDir });
 });
 
+test("session/resume switches to an existing OMP session without replay and permits the next prompt", async () => {
+  const agentDir = await mkdtemp(join(tmpdir(), "omp-acp-smoke-resume-agent-"));
+  const cwd = repoRoot;
+  await writeSmokeSession(agentDir, cwd, "resume-smoke", [
+    { type: "session", id: "resume-smoke", cwd, timestamp: "2026-05-08T01:00:00.000Z", title: "Resume" },
+    { type: "message", role: "user", content: "not replayed", timestamp: "2026-05-08T01:01:00.000Z" },
+  ]);
+
+  await withAcpSubprocess("session-happy", async (acp) => {
+    acp.send(initializeRequest(37));
+    await acp.nextResponse(37);
+
+    acp.send({ jsonrpc: "2.0", id: 38, method: "session/resume", params: { sessionId: "resume-smoke", cwd, mcpServers: [] } });
+    const resumeResponse = await acp.nextResponse(38);
+    assert.deepEqual(resumeResponse.result, {});
+    assert.equal(acp.messages.some((message) => message.method === "session/update"), false);
+
+    acp.send({ jsonrpc: "2.0", id: 39, method: "session/prompt", params: { sessionId: "resume-smoke", prompt: [{ type: "text", text: "after resume" }] } });
+    const promptUpdate = await acp.nextMessage();
+    const promptResponse = await acp.nextResponse(39);
+    assert.equal(updateKind(promptUpdate), "agent_message_chunk");
+    assert.equal(textFromUpdate(promptUpdate), "after resume");
+    assert.deepEqual(promptResponse.result, { stopReason: "end_turn" });
+    assert.equal(acp.stderr, "");
+  }, { OMP_ACP_AGENT_DIR: agentDir });
+});
+
+test("session/prompt forwards image blocks to runtime without adding them to prompt text", async () => {
+  await withAcpSubprocess("session-images", async (acp) => {
+    const sessionId = await initializeAndCreateSession(acp, 40, 41);
+
+    acp.send({
+      jsonrpc: "2.0",
+      id: 42,
+      method: "session/prompt",
+      params: {
+        sessionId,
+        prompt: [
+          { type: "text", text: "look" },
+          { type: "image", data: "abc", mimeType: "image/png", uri: "file:///image.png" },
+        ],
+      },
+    });
+
+    const update = await acp.nextMessage();
+    const response = await acp.nextResponse(42);
+    assert.equal(updateKind(update), "agent_message_chunk");
+    assert.deepEqual(JSON.parse(textFromUpdate(update) ?? ""), {
+      prompt: "look",
+      images: [{ type: "image", data: "abc", mimeType: "image/png", uri: "file:///image.png" }],
+    });
+    assert.deepEqual(response.result, { stopReason: "end_turn" });
+    assert.equal(acp.stderr, "");
+  });
+});
+
 test("runtime extension_ui_request fails session/prompt without assistant message notification", async () => {
   await withAcpSubprocess("extension-ui-request", async (acp) => {
     const sessionId = await initializeAndCreateSession(acp, 34, 35);

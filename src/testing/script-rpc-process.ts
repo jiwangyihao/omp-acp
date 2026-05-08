@@ -84,6 +84,13 @@ function handleRequest(request: JsonObject): void {
       return;
     }
 
+    if (scenario === "session-images") {
+      const prompt = getPromptText(request.params);
+      writeFrame({ type: "message_update", content: JSON.stringify({ prompt, images: getPromptImages(request.params) }) });
+      writeFrame({ type: "response", id, result: { ok: true } });
+      return;
+    }
+
     if (scenario === "session-error") {
       writeFrame({ type: "extension_error", message: "boom" });
       return;
@@ -151,6 +158,13 @@ function getPromptText(params: unknown): string {
     return (params as { prompt: string }).prompt;
   }
   return "";
+}
+
+function getPromptImages(params: unknown): unknown {
+  if (typeof params === "object" && params !== null && !Array.isArray(params) && Array.isArray((params as { images?: unknown }).images)) {
+    return (params as { images: unknown[] }).images;
+  }
+  return [];
 }
 
 function handleStdinChunk(chunk: string): void {

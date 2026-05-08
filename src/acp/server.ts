@@ -8,6 +8,7 @@ import {
   type ListSessionsRequest,
   type NewSessionRequest,
   type PromptRequest,
+  type ResumeSessionRequest,
   type Stream,
 } from "@agentclientprotocol/sdk";
 import { handleInitialize } from "./handlers/initialize.ts";
@@ -18,6 +19,7 @@ import { handleSessionList } from "./handlers/session-list.ts";
 import { handleSessionLoad } from "./handlers/session-load.ts";
 import { handleSessionNew } from "./handlers/session-new.ts";
 import { handleSessionPrompt } from "./handlers/session-prompt.ts";
+import { handleSessionResume } from "./handlers/session-resume.ts";
 import type { HostToolExecutor } from "../runtime/omp/host-tools.ts";
 
 export interface StartAcpServerOptions {
@@ -59,6 +61,10 @@ export function createOmpAcpAgent(
 
     async unstable_listSessions(params: ListSessionsRequest) {
       return handleSessionList(params, handlerOptions);
+    },
+
+    async unstable_resumeSession(params: ResumeSessionRequest) {
+      return handleSessionResume(params, manager, handlerOptions);
     },
 
     async authenticate(_params: AuthenticateRequest) {
