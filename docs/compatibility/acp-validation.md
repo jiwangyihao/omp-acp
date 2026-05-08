@@ -54,7 +54,7 @@
 - `session/stop` 返回 `method_not_found`，与未声明能力一致；
 - stdout 逐行校验为 JSON-RPC frame，避免 adapter stdout 污染。
 
-这不是直接运行 `agentclientprotocol/registry` CI；当前包仍为 `private`，没有 registry manifest，也没有实现 ACP auth flow。它用于在本地覆盖 registry matrix 最关键的 capability discovery 与 unsupported-method 边界。
+这不是直接运行 `agentclientprotocol/registry` CI；当前包没有 registry manifest，也没有实现 ACP auth flow。它用于在本地覆盖 registry matrix 最关键的 capability discovery 与 unsupported-method 边界。
 
 ## ACP Registry / Protocol Matrix
 
@@ -66,7 +66,7 @@
 
 Registry 的 auth checker 还会检查 `authMethods`，并明确要求 agent 不得向 stdout 写入非 ACP JSON-RPC 内容。
 
-当前 `omp-acp` 仍是 `private` 本地 adapter，且没有实现 ACP auth flow，因此不把 Registry CI 作为当前本地发布门禁。若未来准备 registry 入口，必须先单独设计并实现 truthful auth 能力，再用 registry manifest 和官方 CI 验证。
+当前 `omp-acp` 已发布为 npm 包，但仍没有实现 ACP auth flow，也没有 registry manifest，因此不把 Registry CI 作为当前发布门禁。若未来准备 registry 入口，必须先单独设计并实现 truthful auth 能力，再用 registry manifest 和官方 CI 验证。
 
 ## `openclaw/acpx` conformance draft
 

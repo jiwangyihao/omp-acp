@@ -142,9 +142,8 @@ async function fetchWithRetries(url) {
   let lastError;
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     try {
-      const response = await fetch(url, {
-        headers: { "User-Agent": "omp-acp-validation" },
-      });
+      const headers = { "User-Agent": "omp-acp-validation", ...authorizationHeaders() };
+      const response = await fetch(url, { headers });
       if (response.ok) {
         return response;
       }
@@ -157,6 +156,14 @@ async function fetchWithRetries(url) {
     }
   }
   throw new Error(`Failed to fetch ${url}: ${lastError?.message ?? String(lastError)}`);
+}
+
+function authorizationHeaders() {
+  const token = process.env.GITHUB_TOKEN ?? process.env.GH_TOKEN;
+  if (token === undefined || token.length === 0) {
+    return {};
+  }
+  return { Authorization: `Bearer ${token}` };
 }
 
 async function runAcpxRunner({ profilePath, casesDir, runnerPath, agentDir, reportPath }) {

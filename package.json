@@ -1,16 +1,30 @@
 {
   "name": "omp-acp",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "ACP adapter for the Oh My Pi coding agent.",
-  "license": "MIT",
+  "license": "MPL-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/jiwangyihao/omp-acp.git"
+  },
+  "bugs": {
+    "url": "https://github.com/jiwangyihao/omp-acp/issues"
+  },
+  "homepage": "https://github.com/jiwangyihao/omp-acp#readme",
+  "keywords": [
+    "acp",
+    "agent-client-protocol",
+    "oh-my-pi",
+    "zed"
+  ],
   "type": "module",
-  "private": true,
   "main": "dist/index.js",
   "bin": {
     "omp-acp": "dist/index.js"
   },
   "files": [
     "dist",
+    "src",
     "README.md"
   ],
   "scripts": {

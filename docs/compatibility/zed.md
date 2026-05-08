@@ -65,7 +65,7 @@ Zed custom-agent model and thinking pickers come from the adapter's ACP setup re
 
 ## Current limits
 
-- The package remains `private`; there is no supported `npx -y omp-acp` install path.
+- Published npm package usage is supported via `npx -y omp-acp`; local checkout configuration remains useful for development and testing.
 - ACP `session/close` is not declared.
 - MCP HTTP/SSE, terminal delegation, filesystem delegation, permission request UX, audio prompt blocks, usage updates, OMP-specific runtime knobs, sampling controls, service tiers, tools/MCP toggles, and multiple OMP agent modes are not declared.
 - Zed GUI has not manually validated `session/fork` or the Stage 8B session controls; the release gate still requires `scripts/smoke-zed.md`.

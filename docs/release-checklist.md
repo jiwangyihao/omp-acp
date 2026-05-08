@@ -1,28 +1,28 @@
 # 发布前检查清单
 
-`omp-acp` 当前仍是 `private` 包。本清单用于决定何时可以从本地开发状态进入发布准备；未完成所有发布门禁前，不应移除 `private: true`，也不应发布或文档化 `npx -y omp-acp`。
+`omp-acp` v0.1.0 已进入发布任务。本清单用于记录发布前后门禁、npm 包配置和 GitHub Release 状态；后续版本仍应在发布前重新跑 fresh 验证。
 
 ## 当前验证快照（2026-05-08）
 
 | 门禁 | 当前结果 | 证据 |
 |---|---|---|
-| `npm run check` | 通过 | 163 tests pass；包含 `test/unit/acp/session-controls.test.ts`、`test/unit/acp/session-config.test.ts` 与 expanded smoke tests |
+| `npm run check` | 通过 | 2026-05-08 发布前 fresh run：164 tests pass；包含 prompt lifecycle 回归、session controls、fork、load/resume 与 expanded smoke tests |
 | `npm run build` | 通过 | `tsup src/index.ts --format esm --platform node --target node20 --clean` 生成 `dist/index.js` |
 | stdio smoke | 通过 | `npm run smoke:acp` 使用 build output 和 fixture runtime 完成 initialize/new/prompt、`session/fork`、session controls 与 setter 后 prompt |
 | official SDK client smoke | 通过 | `npm run smoke:sdk-client` 使用 `@agentclientprotocol/sdk` 的 `ClientSideConnection` 驱动 build output，覆盖 initialize/new/prompt/list/resume/fork、setup state、session controls 与 setter 后 prompt |
-| real OMP RPC controls smoke | 通过 | `npm run smoke:omp-rpc-controls` 本机输出 `skipped:false`，验证真实 `get_state`、`get_available_models` 与 OMP controls setters 后 state 生效 |
-| Registry-style probe | 通过 | `npm run validate:registry` 覆盖 initialize、capability signal、session/new、session/list、session/resume、`session/fork`、session controls success、setter 后 prompt，以及 unsupported `session/stop` probe |
-| `openclaw/acpx` draft assessment | 通过（有 expected draft failures） | `npm run validate:acpx` 固定 `d46e156...`；21 case，11 pass，10 expected draft failures，0 unexpected；这不是 full pass |
-| Zed 手工 smoke | 未执行 | 已安装隔离用官方 Zed：`C:/Users/34404/AppData/Local/Programs/Zed/bin/zed.exe --version` 输出 `Zed 1.1.6 ...`；`zed` 仍未加入当前 PATH；GUI 手工步骤尚未执行 |
+| real OMP RPC controls smoke | 通过 | 2026-05-08 发布前 fresh `npm run validate:standard` 内执行；真实 `get_state`、`get_available_models` 与 OMP controls setters 后 state 生效 |
+| Registry-style probe | 通过 | 2026-05-08 发布前 fresh `npm run validate:standard` 内执行；覆盖 capability discovery、session controls probes 与 unsupported-method 边界 |
+| `openclaw/acpx` draft assessment | 通过（有 expected draft failures） | 2026-05-08 发布前 fresh `npm run validate:standard` 内执行；固定 `d46e156...`，21 cases，11 passed，10 expected draft failures，0 unexpected；这不是 full pass |
+| Zed 手工 smoke | 未执行 | GUI 手工 smoke 未自动化；发布说明不得声称已完成 Zed GUI 手工验证 |
 
-本次 Stage 8B 已运行除 Zed 外的自动门禁；其中 `openclaw/acpx` 仅表示 0 unexpected failure，不表示官方完整 conformance 或 full pass。Zed GUI 手工 smoke 仍是发布阻塞项。
+本次发布按用户明确指令进入 GitHub 与 npm 发布任务。自动门禁必须重新跑 fresh 结果；其中 `openclaw/acpx` 仅表示 0 unexpected failure，不表示官方完整 conformance 或 full pass。Zed GUI 手工 smoke 未执行时，只能如实记录未验证，不能在发布说明中声称通过。
 
-## 必须保持的发布边界
+## 发布边界
 
-- `package.json` 必须保留 `private: true`，直到明确进入发布任务。
-- README 和兼容性文档不得提供未发布包的 `npx -y omp-acp` 安装路径。
+`private: true` 只能在明确发布任务中移除；README 和兼容性文档可以在 npm 包发布后提供 `npx -y omp-acp` 路径，但不得暗示未实现能力或 Zed GUI 已人工验证。
 - `initialize` 只能声明能力矩阵中已实现且已测试的能力。
 - stdout 只能输出 ACP JSON-RPC frame；日志、诊断和 smoke 脚本说明必须走 stderr 或脚本自身 stdout，不得来自 adapter stdout。
+- 发布许可证采用 MPL-2.0。发布前已核对参考上游：`pi-acp`、OpenCode ACP 参考实现与 OMP coding agent 均为 MIT；`@agentclientprotocol/sdk` 为 Apache-2.0；未观察到阻止本项目采用 MPL-2.0 的上游许可证约束。
 
 ## 发布前自动化门禁
 
@@ -65,7 +65,7 @@
 
 ## 发布决策
 
-只有当自动化门禁和 Zed 手工门禁全部通过后，才可以开始单独的发布任务。发布任务至少需要重新评估：
+本次发布任务由用户明确触发。发布时至少需要重新评估：
 
 1. 是否移除 `private: true`；
 2. npm package name 是否可用；

@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 import { Readable, Writable } from "node:stream";
 import { startAcpServer } from "./acp/server.ts";
 import { createStdioAcpStream } from "./acp/transport/stdio.ts";

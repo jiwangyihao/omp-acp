@@ -33,7 +33,34 @@ Stage 1 implemented ACP stdio transport and truthful `initialize`; Stage 2 added
 
 Session controls are intentionally conservative. Model and thinking selectors come from OMP `get_state` / `get_available_models`; thinking values are clipped to the current model metadata, so a model that does not support `xhigh` will not offer it and active setters reject unsupported values. OMP-specific runtime knobs such as steering mode, follow-up mode, interrupt mode, and auto compaction are intentionally hidden from ACP `configOptions` so they do not appear in Zed. The adapter does not expose provider secrets, base URLs, raw provider config, sampling knobs, tools/MCP, or multiple OMP agent modes as per-session ACP controls.
 
-The adapter is still not a complete coding-agent bridge: `session/close`, MCP, filesystem and terminal delegation, permission request UX, command execution, usage updates, and broad real-OMP parity remain unimplemented or unsupported and are not declared as supported capabilities. `session/fork` does not support message-bound fork or `_meta.messageId` / `_meta.messageID`. Release is blocked until the checklist in `docs/release-checklist.md` is satisfied, including manual Zed smoke from `scripts/smoke-zed.md`.
+The adapter is still not a complete coding-agent bridge: `session/close`, MCP, filesystem and terminal delegation, permission request UX, command execution, usage updates, and broad real-OMP parity remain unimplemented or unsupported and are not declared as supported capabilities. `session/fork` does not support message-bound fork or `_meta.messageId` / `_meta.messageID`.
+
+## Installation
+
+The published CLI entry point is intended for local ACP custom-agent configuration:
+
+```bash
+npx -y omp-acp
+```
+
+For Zed/ZedG local development against a real OMP runtime, configure the adapter command and set the runtime environment explicitly, for example:
+
+```json
+{
+  "command": "node",
+  "args": ["/path/to/omp-acp/dist/index.js"],
+  "env": {
+    "OMP_ACP_RUNTIME_COMMAND": "/path/to/omp",
+    "OMP_ACP_RUNTIME_ARGS_JSON": "[\"--mode\",\"rpc\"]"
+  }
+}
+```
+
+When using the npm package directly, set the same `OMP_ACP_RUNTIME_COMMAND` and `OMP_ACP_RUNTIME_ARGS_JSON` values in the host editor configuration.
+
+## License
+
+`omp-acp` is distributed under the Mozilla Public License 2.0 (MPL-2.0).
 
 Run the development subprocess entry point with:
 
@@ -60,8 +87,8 @@ npm run validate:standard
 
 `validate:standard` runs the automated gates above plus `npm run check`; it intentionally excludes Zed GUI smoke. The `openclaw/acpx` script reports the full draft profile result and treats only documented, capability-boundary mismatches as expected draft failures; it is not an official full conformance pass.
 
-Do not use npm or npx installation commands for this package yet. The package remains `private` and has not been published.
-
 ## Current status
 
-This repository is in active development and is not ready for publication. Zed/custom-agent configuration is documented for local development in `docs/compatibility/zed.md`; ACP validation strategy is documented in `docs/compatibility/acp-validation.md`; registry or npm installation should wait until permission behavior, broader real-OMP parity, and release packaging are verified.
+`omp-acp` is published as an early OMP-native ACP adapter. The automated ACP, SDK-client, registry-style, real OMP RPC controls, and pinned `openclaw/acpx` draft assessment gates are part of the release process. Zed/custom-agent configuration is documented in `docs/compatibility/zed.md`; ACP validation strategy is documented in `docs/compatibility/acp-validation.md`.
+
+The package is not an official full ACP conformance claim. `openclaw/acpx` is a third-party draft assessment, and documented expected draft failures are not a full pass.
