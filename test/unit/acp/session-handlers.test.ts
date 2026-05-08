@@ -154,6 +154,11 @@ async function waitForCondition(predicate: () => boolean): Promise<void> {
   assert.equal(predicate(), true);
 }
 
+function finishRuntimePrompt(runtime: FakeRuntimeAdapter, index = runtime.promptDeferreds.length - 1): void {
+  runtime.promptDeferreds[index]!.resolve({});
+  runtime.emit({ type: "event", eventType: "agent_end", raw: {} });
+}
+
 test("session/new returns the created session id", async () => {
   const { manager, runtimes, inputs } = createHarness();
 
@@ -165,6 +170,25 @@ test("session/new returns the created session id", async () => {
   assert.ok(response.configOptions?.some((option) => option.id === "model"));
   assert.equal(runtimes.length, 1);
   assert.deepEqual(inputs, [{ cwd: "/tmp/project", mcpServers: [], sessionId: "session-1" }]);
+});
+
+test("prompt stays active until runtime emits agent_end", async () => {
+  const { manager, connection, runtime } = await createSession();
+
+  const promptPromise = handleSessionPrompt(promptRequest(), { manager, connection });
+  let settled = false;
+  promptPromise.then(() => {
+    settled = true;
+  });
+
+  runtime.promptDeferreds[0]!.resolve({});
+  await new Promise<void>((resolve) => setImmediate(resolve));
+
+  assert.equal(settled, false);
+  assert.equal(runtime.listeners.size, 1);
+
+  runtime.emit({ type: "event", eventType: "agent_end", raw: {} });
+  assert.deepEqual(await promptPromise, { stopReason: "end_turn" });
 });
 
 test("text prompt sends agent_message_chunk before returning end_turn", async () => {
@@ -185,7 +209,7 @@ test("text prompt sends agent_message_chunk before returning end_turn", async ()
   promptPromise.then(() => {
     settled = true;
   });
-  runtime.promptDeferreds[0]!.resolve({});
+  finishRuntimePrompt(runtime, 0);
   await Promise.resolve();
   assert.equal(settled, false);
 
@@ -198,7 +222,7 @@ test("thought event sends agent_thought_chunk", async () => {
 
   const promptPromise = handleSessionPrompt(promptRequest(), { manager, connection });
   runtime.emit({ type: "event", eventType: "message_update", raw: { kind: "thought", content: "reasoning" } });
-  runtime.promptDeferreds[0]!.resolve({});
+  finishRuntimePrompt(runtime, 0);
   connection.resolveAllUpdates();
 
   assert.deepEqual(await promptPromise, { stopReason: "end_turn" });
@@ -231,7 +255,7 @@ test("cancel while prompt pending returns cancelled, requests runtime abort, sup
   assert.deepEqual(runtime.requests.at(-1), { method: "abort", params: undefined });
 
   runtime.emit({ type: "event", eventType: "message_update", raw: { content: "too late" } });
-  runtime.promptDeferreds[0]!.resolve({});
+  finishRuntimePrompt(runtime, 0);
   await waitForCondition(() => runtime.listeners.size === 0);
 
   assert.deepEqual(connection.updates, []);
@@ -272,12 +296,36 @@ test("cancelled prompt retains ownership until runtime prompt settles", async ()
   runtime.emit({ type: "event", eventType: "message_update", raw: { content: "too late" } });
   assert.deepEqual(connection.updates, []);
 
-  runtime.promptDeferreds[0]!.resolve({});
+  finishRuntimePrompt(runtime, 0);
   await waitForCondition(() => runtime.listeners.size === 0);
 
   const thirdPrompt = handleSessionPrompt(promptRequest({ prompt: [{ type: "text", text: "third" }] }), { manager, connection });
   assert.equal(runtime.promptDeferreds.length, 2);
-  runtime.promptDeferreds[1]!.resolve({});
+  finishRuntimePrompt(runtime, 1);
+  assert.deepEqual(await thirdPrompt, { stopReason: "end_turn" });
+});
+
+test("cancelled prompt waits for agent_end when prompt command later rejects", async () => {
+  const { manager, connection, runtime } = await createSession();
+
+  const firstPrompt = handleSessionPrompt(promptRequest(), { manager, connection });
+  await handleSessionCancel({ sessionId: "session-1" }, manager);
+  assert.deepEqual(await firstPrompt, { stopReason: "cancelled" });
+
+  runtime.promptDeferreds[0]!.reject(new Error("late prompt failure"));
+  await new Promise<void>((resolve) => setImmediate(resolve));
+
+  const secondPrompt = handleSessionPrompt(promptRequest({ prompt: [{ type: "text", text: "second" }] }), { manager, connection });
+  await Promise.resolve();
+  assert.equal(runtime.promptDeferreds.length, 1, "second prompt must be rejected before reaching runtime");
+  await assert.rejects(secondPrompt, /active prompt/);
+
+  runtime.emit({ type: "event", eventType: "agent_end", raw: {} });
+  await waitForCondition(() => runtime.listeners.size === 0);
+
+  const thirdPrompt = handleSessionPrompt(promptRequest({ prompt: [{ type: "text", text: "third" }] }), { manager, connection });
+  assert.equal(runtime.promptDeferreds.length, 2);
+  finishRuntimePrompt(runtime, 1);
   assert.deepEqual(await thirdPrompt, { stopReason: "end_turn" });
 });
 
@@ -286,7 +334,7 @@ test("normal prompt drains updates appended while earlier deliveries are pending
 
   const promptPromise = handleSessionPrompt(promptRequest(), { manager, connection });
   runtime.emit({ type: "event", eventType: "message_update", raw: { content: "first" } });
-  runtime.promptDeferreds[0]!.resolve({});
+  finishRuntimePrompt(runtime, 0);
   await new Promise<void>((resolve) => setImmediate(resolve));
 
   runtime.emit({ type: "event", eventType: "message_update", raw: { content: "second" } });
@@ -316,7 +364,7 @@ test("cancel during update drain returns cancelled and releases prompt", async (
 
   const promptPromise = handleSessionPrompt(promptRequest(), { manager, connection });
   runtime.emit({ type: "event", eventType: "message_update", raw: { content: "first" } });
-  runtime.promptDeferreds[0]!.resolve({});
+  finishRuntimePrompt(runtime, 0);
   await new Promise<void>((resolve) => setImmediate(resolve));
 
   await handleSessionCancel({ sessionId: "session-1" }, manager);
@@ -327,7 +375,7 @@ test("cancel during update drain returns cancelled and releases prompt", async (
   connection.updateDeferreds[0]!.resolve();
   const nextPrompt = handleSessionPrompt(promptRequest({ prompt: [{ type: "text", text: "next" }] }), { manager, connection });
   assert.equal(runtime.promptDeferreds.length, 2);
-  runtime.promptDeferreds[1]!.resolve({});
+  finishRuntimePrompt(runtime, 1);
   assert.deepEqual(await nextPrompt, { stopReason: "end_turn" });
 });
 
@@ -336,7 +384,7 @@ test("runtime event failure during update drain rejects prompt", async () => {
 
   const promptPromise = handleSessionPrompt(promptRequest(), { manager, connection });
   runtime.emit({ type: "event", eventType: "message_update", raw: { content: "first" } });
-  runtime.promptDeferreds[0]!.resolve({});
+  finishRuntimePrompt(runtime, 0);
   await new Promise<void>((resolve) => setImmediate(resolve));
 
   runtime.emit({ type: "event", eventType: "extension_error", raw: { message: "boom" } });
@@ -373,7 +421,7 @@ test("unregistered host tool call emits ACP failure and raw error result before 
     raw: { type: "host_tool_call", id: "host_1", toolCallId: "tc_1", toolName: "missing", arguments: { value: 1 } },
   });
   await waitForCondition(() => connection.updates.length === 1);
-  runtime.promptDeferreds[0]!.resolve({});
+  finishRuntimePrompt(runtime, 0);
   await new Promise<void>((resolve) => setImmediate(resolve));
 
   assert.equal(settled, false);
@@ -425,7 +473,7 @@ test("registered host tool call uses registry and sends raw success result", asy
   await waitForCondition(() => connection.updates.length === 1);
   connection.updateDeferreds[0]!.resolve();
   await waitForCondition(() => connection.updates.length === 2);
-  runtime.promptDeferreds[0]!.resolve({});
+  finishRuntimePrompt(runtime, 0);
   await new Promise<void>((resolve) => setImmediate(resolve));
 
   connection.updateDeferreds[1]!.resolve();
@@ -474,7 +522,7 @@ test("late host tool events after cancel are suppressed", async () => {
     raw: { type: "host_tool_call", id: "host_4", toolName: "missing" },
   });
   runtime.emit({ type: "event", eventType: "host_tool_cancel", raw: { type: "host_tool_cancel", targetId: "host_4" } });
-  runtime.promptDeferreds[0]!.resolve({});
+  finishRuntimePrompt(runtime, 0);
   await waitForCondition(() => runtime.listeners.size === 0);
 
   assert.deepEqual(connection.updates, []);
@@ -486,6 +534,6 @@ test("concurrent prompt rejects", async () => {
   const firstPrompt = handleSessionPrompt(promptRequest(), { manager, connection });
   await assert.rejects(handleSessionPrompt(promptRequest({ prompt: [{ type: "text", text: "second" }] }), { manager, connection }), /active prompt/);
 
-  runtime.promptDeferreds[0]!.resolve({});
+  finishRuntimePrompt(runtime, 0);
   assert.deepEqual(await firstPrompt, { stopReason: "end_turn" });
 });

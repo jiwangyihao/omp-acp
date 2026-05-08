@@ -40,6 +40,10 @@ function writeFailure(id: unknown, command: string, error: string): void {
   writeFrame({ id, type: "response", command, success: false, error });
 }
 
+function writeAgentEnd(): void {
+  writeFrame({ type: "agent_end", messages: [] });
+}
+
 function handleRequest(request: JsonObject): void {
   const id = request.id;
   const command = typeof request.type === "string" ? request.type : "";
@@ -55,7 +59,7 @@ function handleRequest(request: JsonObject): void {
     const pending = pendingHostToolPrompt;
     pendingHostToolPrompt = undefined;
     if (pending !== undefined) {
-      writeSuccess(pending.id, "prompt", { ok: true });
+      writeAgentEnd();
     }
     return;
   }
@@ -161,40 +165,47 @@ function handleRequest(request: JsonObject): void {
   if (command === "prompt") {
     if (scenario === "session-happy") {
       const prompt = getPromptText(request);
+      writeSuccess(id, command, { ok: true });
       writeFrame({ type: "message_update", content: prompt });
       writeFrame({ type: "message_update", kind: "thought", content: "thinking" });
-      writeSuccess(id, command, { ok: true });
+      writeAgentEnd();
       return;
     }
 
     if (scenario === "session-images") {
       const prompt = getPromptText(request);
-      writeFrame({ type: "message_update", content: JSON.stringify({ prompt, images: getPromptImages(request) }) });
       writeSuccess(id, command, { ok: true });
+      writeFrame({ type: "message_update", content: JSON.stringify({ prompt, images: getPromptImages(request) }) });
+      writeAgentEnd();
       return;
     }
 
     if (scenario === "session-error") {
+      writeSuccess(id, command, { ok: true });
       writeFrame({ type: "extension_error", message: "boom" });
       return;
     }
 
     if (scenario === "extension-ui-request") {
+      writeSuccess(id, command, { ok: true });
       writeFrame({ type: "extension_ui_request", method: "showDialog", id: "ui-smoke-1" });
       return;
     }
     if (scenario === "session-cancel") {
+      writeSuccess(id, command, { ok: true });
       pendingCancelPrompt = { id, params: request };
       return;
     }
 
     if (scenario === "session-cwd") {
-      writeFrame({ type: "message_update", content: process.cwd() });
       writeSuccess(id, command, { ok: true });
+      writeFrame({ type: "message_update", content: process.cwd() });
+      writeAgentEnd();
       return;
     }
 
     if (scenario === "session-tool-events") {
+      writeSuccess(id, command, { ok: true });
       writeFrame({ type: "tool_execution_start", toolCallId: "tool_smoke_1", name: "read_file", title: "Read config", status: "running", input: { path: "config.json" }, path: "config.json", line: 3 });
       writeFrame({ type: "tool_execution_update", toolCallId: "tool_smoke_1", status: "running", content: "reading config", path: "config.json", line: 3 });
       writeFrame({
@@ -204,11 +215,12 @@ function handleRequest(request: JsonObject): void {
         diff: { path: "config.json", oldText: "old", newText: "new" },
       });
       writeFrame({ type: "tool_execution_end", toolCallId: "tool_smoke_1", status: "completed", output: "done" });
-      writeSuccess(id, command, { ok: true });
+      writeAgentEnd();
       return;
     }
 
     if (scenario === "session-host-tool-unregistered") {
+      writeSuccess(id, command, { ok: true });
       pendingHostToolPrompt = { id, params: request };
       writeFrame({ type: "host_tool_call", id: "host_smoke_1", toolCallId: "host_tool_smoke_1", toolName: "missing_tool", arguments: { value: 1 } });
       return;
@@ -227,7 +239,7 @@ function handleRequest(request: JsonObject): void {
     if (pending !== undefined) {
       setTimeout(() => {
         writeFrame({ type: "message_update", content: "late message" });
-        writeSuccess(pending.id, "prompt", { ok: true });
+        writeAgentEnd();
       }, 50);
     }
     return;

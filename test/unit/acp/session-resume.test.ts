@@ -6,6 +6,7 @@ import test from "node:test";
 import type { Agent, ResumeSessionRequest, SessionUpdate } from "@agentclientprotocol/sdk";
 import { createOmpAcpAgent } from "../../../src/acp/server.ts";
 import type { RuntimeAdapter } from "../../../src/runtime/RuntimeAdapter.ts";
+import type { RuntimeEvent } from "../../../src/runtime/RuntimeEvents.ts";
 import { SessionManager, type RuntimeFactoryInput } from "../../../src/session/manager.ts";
 
 const CONTROL_STATE = {
@@ -24,6 +25,7 @@ class FakeRuntime implements RuntimeAdapter {
   readonly diagnostics = { stderr: "" };
   readonly requests: Array<{ method: string; params?: unknown }> = [];
   closed = false;
+  readonly listeners = new Set<(event: RuntimeEvent) => void>();
   getStateFailure: unknown;
 
   async request(method: string, params?: unknown): Promise<unknown> {
@@ -33,11 +35,23 @@ class FakeRuntime implements RuntimeAdapter {
       return structuredClone(CONTROL_STATE);
     }
     if (method === "get_available_models") return structuredClone(AVAILABLE_MODELS);
+    if (method === "prompt") {
+      queueMicrotask(() => this.emit({ type: "event", eventType: "agent_end", raw: {} }));
+    }
     return { ok: true };
   }
 
-  onEvent(): () => void {
-    return () => {};
+  onEvent(listener: (event: RuntimeEvent) => void): () => void {
+    this.listeners.add(listener);
+    return () => {
+      this.listeners.delete(listener);
+    };
+  }
+
+  emit(event: RuntimeEvent): void {
+    for (const listener of Array.from(this.listeners)) {
+      listener(event);
+    }
   }
 
   async send(): Promise<void> {}
