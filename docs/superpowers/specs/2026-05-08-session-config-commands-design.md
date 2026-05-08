@@ -32,7 +32,7 @@
 
 ### ACP list/load
 
-- `unstable_listSessions` 调用 session discovery，并返回 ACP `ListSessionsResponse`：`{ sessions, nextCursor? }`；每个 `SessionInfo._meta.ompSessionPath` 保存 adapter 私有 path。
+- `listSessions` 调用 session discovery，并返回 ACP `ListSessionsResponse`：`{ sessions, nextCursor? }`；每个 `SessionInfo._meta.ompSessionPath` 保存 adapter 私有 path。
 - `loadSession` 只有在实现历史回放后才可声明。本阶段 load 契约为 text-history baseline：
   1. 根据 ACP `sessionId` 找到 session file path；
   2. 解析 JSONL 中 `type:"message"` entries，按文件顺序把 role `user`/`assistant` 的 string 或 text-block content 转成 ACP `user_message_chunk` / `agent_message_chunk`；

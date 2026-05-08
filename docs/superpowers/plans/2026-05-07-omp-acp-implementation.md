@@ -407,7 +407,7 @@ node scripts/smoke-acp.mjs
 
 - [x] **6A：session lifecycle**
   - 实现：`session/resume`（switch OMP session path, no history replay）。
-  - 不声明：`session/fork`（ACP request 与 OMP branch/new-session 语义不足以保证等价 fork）、`session/close`（SDK 0.12 无 agent-side method）。
+  - 不声明：`session/fork`（ACP request 与 OMP branch/new-session 语义不足以保证等价 fork）、`session/close`（SDK 0.21.0 已有 agent-side method，但 adapter 尚无可防御的 OMP close 语义）。
 - [x] **6B：embedded context 与 image prompt**
   - 文件：`src/translate/prompt.ts`
   - 验收：text、resource_link、image、embedded text/blob context 均有转换测试；audio/unknown resource 返回明确错误。
@@ -416,7 +416,7 @@ node scripts/smoke-acp.mjs
 - [x] **6D：permission request**
   - 决策：不声明；尚无 OMP runtime permission request event/policy contract。
 - [x] **6E：usage update**
-  - 决策：不声明/不伪造；当前 ACP SDK schema 无 usage update session update，且 OMP usage event 未 contract-tested。
+  - 决策：不声明/不伪造；SDK 0.21.0 已有 usage update session update 类型，但 OMP usage event 未 contract-tested。
 
 ### 阶段 7：Zed smoke、发布准备与回归矩阵
 

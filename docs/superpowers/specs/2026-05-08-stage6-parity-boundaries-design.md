@@ -6,11 +6,11 @@
 
 - 实现 ACP `session/resume`：不回放历史，恢复 OMP session path 并允许后续 prompt。
 - 不实现/不声明 `session/fork`：当前 ACP request 只有 source session id，而 OMP RPC `branch` 需要 entry id；用 `new_session parentSession` 也无法保证 ACP fork 语义。
-- 不实现/不声明 `session/close`：当前 `@agentclientprotocol/sdk@0.12.0` 没有 agent-side `session/close` method。
+- 不实现/不声明 `session/close`：SDK 0.21.0 已暴露 agent-side `session/close` method，但 adapter 尚无可防御的 OMP close 语义。
 - 实现 prompt image block 转发到 OMP RPC `images` 字段，并声明 `promptCapabilities.image:true`。
 - 实现 embedded resource context 转换为 stable text prompt sections，并声明 `promptCapabilities.embeddedContext:true`；text resource 直接嵌入 text，blob resource 以 uri/mime/base64 blob text section 传递，不静默丢弃。
 - 保持 audio prompt unsupported，继续声明 `audio:false`。
-- MCP HTTP/SSE、permission request、usage update 保持不声明：当前 adapter 没有 OMP runtime contract 或 ACP schema surface 可以 truthfully 映射。
+- MCP HTTP/SSE、permission request、usage update 保持不声明：当前 adapter 没有可测试的 OMP runtime contract 可以 truthfully 映射这些能力。
 
 ## Observed protocol basis
 
@@ -19,11 +19,11 @@
 - ACP SDK `PromptCapabilities.embeddedContext` means clients may send embedded `resource` blocks; OMP RPC has no separate embedded-resource field, so Stage 6 represents embedded resources as explicit prompt text sections. This is truthful because the adapter consumes the resource block and forwards its content, not just a link.
 - MCP boundary: ACP receives MCP server declarations in session requests, but the adapter has no tested OMP RPC command or process launch contract that wires HTTP/SSE MCP servers into the running OMP session. Therefore `mcpCapabilities.http/sse` remain false.
 - Permission boundary: ACP permission UX requires agent-to-client `session/request_permission`; the adapter has no OMP runtime event contract for permission requests or policy decisions. Therefore permission request remains unimplemented.
-- Usage boundary: the installed ACP SDK schema has no `usage_update` session update type, and no OMP usage event shape has been contract-tested. Therefore usage update remains unimplemented.
+- Usage boundary: SDK 0.21.0 exposes a `usage_update` session update type, but no OMP usage event shape has been contract-tested. Therefore usage update remains unimplemented.
 
 ## Session resume contract
 
-- `unstable_resumeSession(params)` 通过 `findOmpSessionById(params.sessionId, { cwd, agentDir })` 找 session path。
+- `resumeSession(params)` 通过 `findOmpSessionById(params.sessionId, { cwd, agentDir })` 找 session path。
 - 启动 runtime，等待 ready，发送 `runtime.request("switch_session", { sessionPath })`。
 - 在 `SessionManager` 中发布同一 `sessionId`，不 replay history，返回 ACP `ResumeSessionResponse` `{}`。
 - `initialize` 声明 `sessionCapabilities.resume:{}`，但不声明 fork/close。

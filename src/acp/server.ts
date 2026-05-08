@@ -59,11 +59,11 @@ export function createOmpAcpAgent(
       return handleSessionLoad(params, manager, connection, handlerOptions);
     },
 
-    async unstable_listSessions(params: ListSessionsRequest) {
+    async listSessions(params: ListSessionsRequest) {
       return handleSessionList(params, handlerOptions);
     },
 
-    async unstable_resumeSession(params: ResumeSessionRequest) {
+    async resumeSession(params: ResumeSessionRequest) {
       return handleSessionResume(params, manager, handlerOptions);
     },
 

@@ -17,9 +17,9 @@
 
 ## 背景与约束
 
-- 当前仓库已安装 `@agentclientprotocol/sdk@0.12.0`。
+> 维护注记（2026-05-08）：当前仓库已升级到 `@agentclientprotocol/sdk@0.21.0`；本节保留下方 Stage 1 编写时观察到的 SDK 0.12.0 背景，后续实现以当前依赖和能力矩阵为准。
 - SDK 提供 `AgentSideConnection`、`ndJsonStream`、`PROTOCOL_VERSION`、`RequestError` 和 ACP schema 类型。
-- SDK 的 `Agent` 接口要求实现 `initialize`、`newSession`、`authenticate`、`prompt`、`cancel`；可选接口成员为 `loadSession?`、`unstable_listSessions?`、`unstable_forkSession?`、`unstable_resumeSession?`，它们分别由 SDK 分发协议方法 `session/load`、`session/list`、`session/fork`、`session/resume`。
+- Stage 1 编写时，SDK 的 `Agent` 接口要求实现 `initialize`、`newSession`、`authenticate`、`prompt`、`cancel`；可选接口成员为 `loadSession?`、`unstable_listSessions?`、`unstable_forkSession?`、`unstable_resumeSession?`，它们分别由 SDK 分发协议方法 `session/load`、`session/list`、`session/fork`、`session/resume`。SDK 0.21.0 中 `session/list`、`session/resume` 已改为稳定接口名 `listSessions?`、`resumeSession?`。
 - ACP schema 规定 baseline agent 应支持 `session/new`、`session/prompt`、`session/cancel` 和 `session/update`。阶段 1 只是内部里程碑，因此这些方法只提供明确的「尚不可用」错误保护；项目在阶段 3 前不得声称 ACP agent 可用。
 - stdout 必须只输出 JSON-RPC / NDJSON frame。所有日志、诊断、异常说明只能写入 stderr 或测试断言中。
 - 阶段 1 在当前 `omp-acp` 仓库工作区和主分支上实现。禁止创建 git worktree、禁止创建实现分支，除非用户在后续对话中显式改变该约束。
@@ -158,7 +158,7 @@ export function buildAgentInfo(): Implementation;
 - `sessionCapabilities.list`
 - `sessionCapabilities.fork`
 - `sessionCapabilities.resume`
-- session close（当前 SDK schema 没有在 `SessionCapabilities` 中观察到 close 字段）
+- session close（Stage 1 写作时未在 `SessionCapabilities` 中观察到 close 字段；当前 SDK 0.21.0 已暴露 `session/close`，但 adapter 仍因缺少可防御的 OMP close 语义而不声明，当前状态以 capability matrix 为准）
 - model / mode / config option
 - permission request
 - terminal / filesystem delegation

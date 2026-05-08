@@ -22,7 +22,7 @@
 | `session/cancel` | 已实现 | baseline ACP notification 可用；best-effort 传递 runtime cancel 并本地抑制 late chunks | `test/unit/acp/session-handlers.test.ts` + `test/smoke/session-prompt.test.ts` |
 | `session/list` | 已实现 | 声明 `sessionCapabilities.list:{}`；按 OMP session JSONL header 扫描并支持 cwd filter | `test/unit/runtime/omp/sessions.test.ts` + `test/unit/acp/session-list-load.test.ts` + `test/smoke/session-prompt.test.ts` |
 | `session/load` | 已实现 | 声明 `loadSession:true`；支持 text-only OMP JSONL history replay，unsupported history fails load rather than silently dropping | `test/unit/acp/session-list-load.test.ts` + `test/smoke/session-prompt.test.ts` |
-| `session/close` | 不支持 | 当前 `@agentclientprotocol/sdk@0.12.0` 未暴露 agent-side `session/close` method；不声明 | SDK method inventory + capability test |
+| `session/close` | 不支持 | SDK 0.21.0 已暴露 agent-side `session/close` method，但 adapter 尚无可防御的 OMP close 语义；不声明 | SDK method inventory + capability test |
 | `session/fork` | 不支持 | ACP fork request 只有 source session id，OMP branch/new-session 语义无法保证等价 fork；不声明 | Stage 6 boundary spec |
 | `session/resume` | 已实现 | 声明 `sessionCapabilities.resume:{}`；switch OMP session path，不 replay history | `test/unit/acp/session-resume.test.ts` + `test/smoke/session-prompt.test.ts` |
 | `agent_message_chunk` | 已实现 | runtime `message_update` 文本输出映射为 ACP message chunk | `test/unit/translate/events-message.test.ts` + `test/smoke/session-prompt.test.ts` |
@@ -38,7 +38,7 @@
 | Permission request | 未实现 | 不声明；尚无 OMP runtime permission request event/policy contract | Stage 6 boundary spec |
 | Filesystem delegation | 未实现 | 不声明 | Zed delegation smoke test |
 | Terminal delegation | 未实现 | 不声明 | Zed delegation smoke test |
-| Usage update | 不支持 | 当前 ACP SDK schema 无 `usage_update` session update 且 OMP usage event 未 contract-tested；不伪造 | Stage 6 boundary spec |
+| Usage update | 未实现 | SDK 0.21.0 已有 `usage_update` session update 类型，但 OMP usage event 尚未 contract-tested；不伪造 | Stage 6 boundary spec |
 | OMP slash commands | 已实现 | 仅 discovery metadata；不执行、不作为可用 slash command 暴露 | `test/unit/runtime/omp/commands.test.ts` |
 | OMP skills commands | 已实现 | 仅 discovery metadata；不执行、不作为可用 slash command 暴露 | `test/unit/runtime/omp/commands.test.ts` |
 | `omp.extensions` manifest entries | 已实现 | 仅 package/module entry discovery metadata；不执行 extension，不声称 runtime-registered command names | `test/unit/runtime/omp/commands.test.ts` |

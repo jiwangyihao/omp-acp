@@ -30,7 +30,7 @@ class FakeRuntime implements RuntimeAdapter {
   }
 }
 
-type TestAgent = Agent & Required<Pick<Agent, "unstable_resumeSession">>;
+type TestAgent = Agent & Required<Pick<Agent, "resumeSession">>;
 
 async function makeAgent() {
   const agentDir = await mkdtemp(join(tmpdir(), "omp-acp-resume-agent-"));
@@ -62,7 +62,7 @@ async function writeSession(agentDir: string, cwd: string, sessionId: string, li
   return path;
 }
 
-test("unstable_resumeSession switches runtime to OMP session path, publishes same session id, and does not replay history", async () => {
+test("resumeSession switches runtime to OMP session path, publishes same session id, and does not replay history", async () => {
   const { agent, agentDir, runtimes, inputs, updates } = await makeAgent();
   const cwd = join(tmpdir(), "resume-project");
   const sessionPath = await writeSession(agentDir, cwd, "resume-me", [
@@ -71,7 +71,7 @@ test("unstable_resumeSession switches runtime to OMP session path, publishes sam
     { type: "message", role: "assistant", content: "old answer" },
   ]);
 
-  const response = await agent.unstable_resumeSession({ sessionId: "resume-me", cwd, mcpServers: [] } as ResumeSessionRequest);
+  const response = await agent.resumeSession({ sessionId: "resume-me", cwd, mcpServers: [] } as ResumeSessionRequest);
 
   assert.deepEqual(response, {});
   assert.equal(inputs.length, 1);
@@ -86,12 +86,12 @@ test("unstable_resumeSession switches runtime to OMP session path, publishes sam
   });
 });
 
-test("unstable_resumeSession fails clearly for unknown sessions", async () => {
+test("resumeSession fails clearly for unknown sessions", async () => {
   const { agent } = await makeAgent();
   const cwd = join(tmpdir(), "resume-missing");
 
   await assert.rejects(
-    agent.unstable_resumeSession({ sessionId: "missing", cwd, mcpServers: [] } as ResumeSessionRequest),
+    agent.resumeSession({ sessionId: "missing", cwd, mcpServers: [] } as ResumeSessionRequest),
     /Unknown OMP session: missing/,
   );
 });

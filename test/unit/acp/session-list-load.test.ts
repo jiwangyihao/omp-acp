@@ -33,7 +33,7 @@ class FakeRuntime implements RuntimeAdapter {
   }
 }
 
-type TestAgent = Agent & Required<Pick<Agent, "loadSession" | "unstable_listSessions">>;
+type TestAgent = Agent & Required<Pick<Agent, "loadSession" | "listSessions">>;
 
 async function makeAgent() {
   const agentDir = await mkdtemp(join(tmpdir(), "omp-acp-agent-"));
@@ -65,7 +65,7 @@ async function writeSession(agentDir: string, cwd: string, sessionId: string, li
   return path;
 }
 
-test("unstable_listSessions returns OMP session info filtered by cwd", async () => {
+test("listSessions returns OMP session info filtered by cwd", async () => {
   const { agent, agentDir } = await makeAgent();
   const projectCwd = join(tmpdir(), "project-a");
   const otherCwd = join(tmpdir(), "project-b");
@@ -77,7 +77,7 @@ test("unstable_listSessions returns OMP session info filtered by cwd", async () 
     { type: "session", id: "session-b", cwd: otherCwd, timestamp: "2026-05-08T03:00:00.000Z" },
   ]);
 
-  const response = await agent.unstable_listSessions({ cwd: projectCwd } as ListSessionsRequest);
+  const response = await agent.listSessions({ cwd: projectCwd } as ListSessionsRequest);
 
   assert.deepEqual(response, {
     sessions: [
