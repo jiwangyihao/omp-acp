@@ -20,11 +20,11 @@ npm run typecheck
 npm run check
 ```
 
-### Stage 5 status
+### Stage 6 status
 
-Stage 1 implemented ACP stdio transport and truthful `initialize`; Stage 2 added the OMP JSONL RPC client and process lifecycle; Stage 3 wired `session/new`, baseline text/resource-link `session/prompt`, message/thought streaming, and best-effort `session/cancel`; Stage 4 maps runtime tool execution events, structured edit diffs, and explicit host-tool raw-frame results; Stage 5 adds OMP session list/load with text-history replay, OMP config/command discovery helpers, and explicit failure for unsupported extension UI requests.
+Stage 1 implemented ACP stdio transport and truthful `initialize`; Stage 2 added the OMP JSONL RPC client and process lifecycle; Stage 3 wired `session/new`, baseline prompt streaming, and cancel; Stage 4 maps runtime tool events/diffs/host-tool results; Stage 5 adds OMP session list/load and config/command discovery helpers; Stage 6 adds `session/resume`, image prompt forwarding, and embedded resource context while explicitly keeping unsupported parity items undeclared.
 
-The adapter is still not a complete coding-agent bridge: session resume/fork/close, MCP, filesystem and terminal delegation, permission request UX, image input, embedded context, command execution, usage updates, and broad real-OMP parity remain unimplemented or unverified and are not declared as supported capabilities.
+The adapter is still not a complete coding-agent bridge: session fork/close, MCP, filesystem and terminal delegation, permission request UX, command execution, usage updates, and broad real-OMP parity remain unimplemented or unsupported and are not declared as supported capabilities.
 
 Run the development subprocess entry point with:
 
@@ -32,10 +32,10 @@ Run the development subprocess entry point with:
 node --import tsx src/index.ts
 ```
 
-Run targeted Stage 5 checks with:
+Run targeted Stage 6 checks with:
 
 ```bash
-node --import tsx --test test/unit/runtime/omp/config.test.ts test/unit/runtime/omp/commands.test.ts test/unit/runtime/omp/sessions.test.ts test/unit/acp/initialize.test.ts test/unit/acp/session-list-load.test.ts test/unit/translate/events-message.test.ts test/smoke/session-prompt.test.ts
+node --import tsx --test test/unit/acp/initialize.test.ts test/unit/acp/session-resume.test.ts test/unit/translate/prompt.test.ts test/smoke/session-prompt.test.ts
 ```
 
 Do not use npm or npx installation commands for this package yet. The package remains `private` and has not been published.

@@ -42,18 +42,18 @@ Do not use those fixture seams for real Zed usage; they exist to make smoke test
 ## Currently declared ACP support
 
 - `session/new`
-- `session/prompt` for `text` and `resource_link`
+- `session/prompt` for `text`, `resource_link`, `image`, and embedded `resource` context
 - `session/cancel` best-effort cancellation
 - message and thought chunks
 - tool calls, tool updates, failed/cancelled tool statuses, and structured diff content for tested OMP event shapes
-- `session/list`
-- `session/load` for text-only OMP JSONL history; unsupported roles/content fail the load rather than silently dropping history
+- `session/list`, `session/load`, and `session/resume`
+- text-only OMP JSONL history replay for `session/load`; unsupported roles/content fail the load rather than silently dropping history
 
 ## Current limits
 
 - The package remains `private`; there is no supported `npx -y omp-acp` install path.
-- `session/resume`, `session/fork`, and ACP `session/close` are not declared.
-- MCP HTTP/SSE, terminal delegation, filesystem delegation, permission request UX, image prompt blocks, and embedded context are not declared.
+- `session/fork` and ACP `session/close` are not declared.
+- MCP HTTP/SSE, terminal delegation, filesystem delegation, permission request UX, audio prompt blocks, and usage updates are not declared.
 - Slash commands, skills, and `omp.extensions` are discovered as metadata only; the adapter does not expose or execute them as ACP commands yet.
 - Extension UI requests fail the active prompt explicitly because adapter-side UI delegation is not implemented.
 

@@ -405,21 +405,18 @@ node scripts/smoke-acp.mjs
 
 **子阶段：**
 
-- [ ] **6A：session lifecycle**
-  - 文件：`src/acp/handlers/session-close.ts`、`session-fork.ts`、`session-resume.ts`
-  - 验收：close/fork/resume 全部有 contract test；无法映射到 OMP 时不声明能力。
-- [ ] **6B：embedded context 与 image prompt**
-  - 文件：`src/translate/prompt.ts`、`src/runtime/omp/prompt.ts`
-  - 验收：text、image、embedded context 分别有转换测试；不支持的 content block 返回明确错误。
-- [ ] **6C：MCP HTTP/SSE**
-  - 文件：`src/runtime/omp/mcp.ts`、`src/acp/handlers/mcp.ts`
-  - 验收：只有真实接入 OMP 或明确由 adapter 管理 MCP server 时才声明 MCP capability。
-- [ ] **6D：permission request**
-  - 文件：`src/session/permissions.ts`、`src/translate/tools.ts`
-  - 验收：allow、deny、timeout、client unsupported 全部有测试。
-- [ ] **6E：usage update**
-  - 文件：`src/translate/usage.ts`
-  - 验收：OMP 提供 token/usage 时映射；没有 usage 时不伪造。
+- [x] **6A：session lifecycle**
+  - 实现：`session/resume`（switch OMP session path, no history replay）。
+  - 不声明：`session/fork`（ACP request 与 OMP branch/new-session 语义不足以保证等价 fork）、`session/close`（SDK 0.12 无 agent-side method）。
+- [x] **6B：embedded context 与 image prompt**
+  - 文件：`src/translate/prompt.ts`
+  - 验收：text、resource_link、image、embedded text/blob context 均有转换测试；audio/unknown resource 返回明确错误。
+- [x] **6C：MCP HTTP/SSE**
+  - 决策：不声明；尚无测试过的 OMP RPC/launch contract 将 ACP HTTP/SSE MCP server 接入 runtime session。
+- [x] **6D：permission request**
+  - 决策：不声明；尚无 OMP runtime permission request event/policy contract。
+- [x] **6E：usage update**
+  - 决策：不声明/不伪造；当前 ACP SDK schema 无 usage update session update，且 OMP usage event 未 contract-tested。
 
 ### 阶段 7：Zed smoke、发布准备与回归矩阵
 
@@ -485,4 +482,4 @@ node scripts/smoke-acp.mjs
 
 ## 7. 当前下一步
 
-阶段 1 至阶段 5 已完成。当前下一步是进入 **阶段 6：OpenCode parity 功能层**，按 6A-6E 逐项实现或明确不声明 session lifecycle、image/embedded context、MCP、permission request、usage update 等能力；每个能力必须单独更新 capability matrix 和测试。
+阶段 1 至阶段 6 已完成。当前下一步是进入 **阶段 7：Zed smoke、发布准备与回归矩阵**；该阶段不新增核心协议能力，只做验证、文档、打包和发布门禁。
