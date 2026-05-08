@@ -41,7 +41,7 @@ export class SessionManager {
   readonly #idGenerator: () => string;
   readonly #sessions = new Map<string, SessionRecord>();
   readonly #pendingRuntimes = new Set<RuntimeAdapter>();
-  readonly #pendingSessionIds = new Set<string>();
+  readonly #pendingSessionIds = new Map<string, symbol>();
   #cleanupGeneration = 0;
 
   constructor(options: SessionManagerOptions) {
@@ -63,7 +63,8 @@ export class SessionManager {
     if (this.#sessions.has(sessionId) || this.#pendingSessionIds.has(sessionId)) {
       throw new SessionManagerError(`Session already exists: ${sessionId}`);
     }
-    this.#pendingSessionIds.add(sessionId);
+    const pendingSessionReservation = Symbol(sessionId);
+    this.#pendingSessionIds.set(sessionId, pendingSessionReservation);
 
     const input: RuntimeFactoryInput = {
       cwd: params.cwd,
@@ -105,7 +106,9 @@ export class SessionManager {
       this.#sessions.set(sessionId, session);
       return session;
     } finally {
-      this.#pendingSessionIds.delete(sessionId);
+      if (this.#pendingSessionIds.get(sessionId) === pendingSessionReservation) {
+        this.#pendingSessionIds.delete(sessionId);
+      }
     }
   }
 

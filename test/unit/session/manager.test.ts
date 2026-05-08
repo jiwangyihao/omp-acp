@@ -137,6 +137,27 @@ test("createSessionWithId rejects duplicate pending session ids", async () => {
   await firstCreate;
 });
 
+test("abandoned session creation cannot clear a later pending reservation", async () => {
+  const { manager, runtimes } = createManager();
+
+  const abandonedCreate = manager.createSessionWithId("fixed-session", newSessionRequest());
+  assert.equal(runtimes.length, 1);
+  await manager.closeAll();
+
+  const laterCreate = manager.createSessionWithId("fixed-session", newSessionRequest());
+  assert.equal(runtimes.length, 2);
+
+  runtimes[0]!.readyDeferred.resolve();
+  await assert.rejects(abandonedCreate, SessionManagerError);
+
+  const duplicateLaterCreate = manager.createSessionWithId("fixed-session", newSessionRequest());
+  assert.equal(runtimes.length, 2);
+  await assert.rejects(duplicateLaterCreate, SessionManagerError);
+
+  runtimes[1]!.readyDeferred.resolve();
+  await laterCreate;
+});
+
 test("requireSession throws SessionManagerError for unknown sessions", () => {
   const { manager } = createManager();
 
