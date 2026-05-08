@@ -120,6 +120,21 @@ export class SessionManager {
     }
   }
 
+  async closeSession(sessionId: string, expectedRuntime?: RuntimeAdapter): Promise<void> {
+    const session = this.#sessions.get(sessionId);
+    if (session === undefined) {
+      return;
+    }
+    if (expectedRuntime !== undefined && session.runtime !== expectedRuntime) {
+      return;
+    }
+
+    this.#sessions.delete(sessionId);
+    session.activePrompt?.cancellation.cancel();
+    session.activePrompt = undefined;
+    await session.runtime.close();
+  }
+
   async closeAll(): Promise<void> {
     this.#cleanupGeneration += 1;
     const sessions = Array.from(this.#sessions.values());

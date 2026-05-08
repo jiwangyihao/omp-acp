@@ -208,7 +208,11 @@ test("cancel while prompt pending returns cancelled, requests runtime cancel, su
 test("cancelled prompt cleanup is bounded when runtime prompt never settles", async () => {
   const { manager, runtime } = await createSession();
 
-  const promptPromise = handleSessionPrompt(promptRequest(), { manager, connection: new FakeConnection() });
+  const promptPromise = handleSessionPrompt(promptRequest(), {
+    manager,
+    connection: new FakeConnection(),
+    cancelledPromptCleanupTimeoutMs: 1,
+  });
   await handleSessionCancel({ sessionId: "session-1" }, manager);
 
   assert.deepEqual(await promptPromise, { stopReason: "cancelled" });
@@ -216,6 +220,7 @@ test("cancelled prompt cleanup is bounded when runtime prompt never settles", as
 
   assert.equal(runtime.closeCalls, 1);
   assert.equal(runtime.listeners.size, 0);
+  assert.throws(() => manager.requireSession("session-1"), /Unknown session/);
 });
 
 test("cancelled prompt retains ownership until runtime prompt settles", async () => {
@@ -291,6 +296,21 @@ test("cancel during update drain returns cancelled and releases prompt", async (
   assert.equal(runtime.promptDeferreds.length, 2);
   runtime.promptDeferreds[1]!.resolve({});
   assert.deepEqual(await nextPrompt, { stopReason: "end_turn" });
+});
+
+test("runtime event failure during update drain rejects prompt", async () => {
+  const { manager, connection, runtime } = await createSession();
+
+  const promptPromise = handleSessionPrompt(promptRequest(), { manager, connection });
+  runtime.emit({ type: "event", eventType: "message_update", raw: { content: "first" } });
+  runtime.promptDeferreds[0]!.resolve({});
+  await new Promise<void>((resolve) => setImmediate(resolve));
+
+  runtime.emit({ type: "event", eventType: "extension_error", raw: { message: "boom" } });
+  connection.updateDeferreds[0]!.resolve();
+
+  await assert.rejects(promptPromise, /Runtime extension error: boom/);
+  assert.equal(runtime.listeners.size, 0);
 });
 
 test("event translation failure stops accepting same-turn assistant updates", async () => {

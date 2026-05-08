@@ -11,13 +11,15 @@ export type SessionPromptConnection = {
 export type SessionPromptHandlerContext = {
   manager: SessionManager;
   connection: SessionPromptConnection;
+  cancelledPromptCleanupTimeoutMs?: number;
 };
 
 
-const CANCELLED_PROMPT_CLEANUP_TIMEOUT_MS = 50;
+const CANCELLED_PROMPT_CLEANUP_TIMEOUT_MS = 30_000;
+
 export async function handleSessionPrompt(
   params: PromptRequest,
-  { manager, connection }: SessionPromptHandlerContext,
+  { manager, connection, cancelledPromptCleanupTimeoutMs = CANCELLED_PROMPT_CLEANUP_TIMEOUT_MS }: SessionPromptHandlerContext,
 ): Promise<PromptResponse> {
   const { session, cancellation, finish } = manager.beginPrompt(params.sessionId);
   const updatePromises: Promise<void>[] = [];
@@ -66,11 +68,17 @@ export async function handleSessionPrompt(
     if (result === "cancelled") {
       scheduleCancelledPromptCleanup({
         runtimePromise,
-        closeRuntime: () => session.runtime.close(),
+        cleanupTimeoutMs: cancelledPromptCleanupTimeoutMs,
         cleanup: () => {
           acceptingEvents = false;
           unsubscribe();
           finish();
+        },
+        forceCleanup: async () => {
+          acceptingEvents = false;
+          unsubscribe();
+          finish();
+          await manager.closeSession(params.sessionId, session.runtime);
         },
       });
       return { stopReason: "cancelled" };
@@ -86,6 +94,7 @@ export async function handleSessionPrompt(
     const drainResult = await Promise.race([
       drainUpdatePromises(updatePromises).then(() => "drained" as const),
       cancellation.cancelled.then(() => "cancelled" as const),
+      eventFailure,
     ]);
     if (drainResult === "cancelled") {
       acceptingEvents = false;
@@ -114,8 +123,9 @@ async function drainUpdatePromises(updatePromises: Promise<void>[]): Promise<voi
 
 function scheduleCancelledPromptCleanup(options: {
   runtimePromise: Promise<unknown>;
-  closeRuntime: () => Promise<void>;
+  cleanupTimeoutMs: number;
   cleanup: () => void;
+  forceCleanup: () => Promise<void>;
 }): void {
   let cleaned = false;
   const cleanupOnce = () => {
@@ -127,8 +137,8 @@ function scheduleCancelledPromptCleanup(options: {
   };
 
   const timeout = setTimeout(() => {
-    options.closeRuntime().catch(() => {}).finally(cleanupOnce);
-  }, CANCELLED_PROMPT_CLEANUP_TIMEOUT_MS);
+    options.forceCleanup().catch(cleanupOnce);
+  }, options.cleanupTimeoutMs);
 
   options.runtimePromise.then(
     () => {
