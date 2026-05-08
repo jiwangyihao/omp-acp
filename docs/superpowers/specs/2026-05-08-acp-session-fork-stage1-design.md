@@ -71,8 +71,8 @@ type ForkSessionRequest = {
 
 - 通过 `findOmpSessionById(params.sessionId, { cwd: params.cwd, agentDir })` 找源 OMP session 文件。
 - 找不到时抛 `RequestError.resourceNotFound(params.sessionId)`。
-- 如果源 session 当前在 `SessionManager` 中存在且 `activePrompt !== undefined`，抛 `RequestError.invalidParams(..., "Cannot fork a session with an active prompt")`。
-- 如果源 session 在 manager 中不存在，但 JSONL 文件存在，可以 fork。这覆盖 session list/load/resume 后的历史 session。
+- 如果源 session 当前在 `SessionManager` 中存在且 `activePrompt !== undefined`，或 fork 期间有新的 `session/prompt` 试图在同一个源 session 上开始，必须抛 `RequestError.invalidParams(..., "Cannot fork a session with an active prompt")` 或等价明确错误。实现不能只做一次非原子只读检查；必须通过 manager 的源 session fork guard 原子地阻止 fork 与同源 prompt 并发。
+- 如果源 session 在 manager 中不存在，但 JSONL 文件存在，也必须先登记同一个 `sessionId` 的 fork guard 再 fork，防止 fork 过程中另一个请求 resume/load 该历史 session 后立即开始 prompt 并追加源 JSONL。
 
 ### Fork 文件生成
 
@@ -94,6 +94,8 @@ export type ForkOmpSessionResult = {
 };
 
 export async function forkOmpSessionFile(options: ForkOmpSessionOptions): Promise<ForkOmpSessionResult>;
+
+export class OmpSessionForkSourceError extends Error {}
 ```
 
 行为：
@@ -132,30 +134,32 @@ export async function forkOmpSessionFile(options: ForkOmpSessionOptions): Promis
 export async function handleSessionFork(
   params: ForkSessionRequest,
   manager: SessionManager,
-  options: { agentDir?: string } = {},
+  options: { agentDir?: string; forkSessionFile?: typeof forkOmpSessionFile } = {},
 ): Promise<ForkSessionResponse>;
 ```
 
 流程：
 
-1. 如果 `manager.tryGetSession(params.sessionId)?.activePrompt` 存在，拒绝 fork。
+1. 调用 `manager.beginForkSource(params.sessionId)` 获取源 session fork guard；如果源 session 当前有 active prompt，拒绝 fork；该 guard 必须在 `finally` 中释放，并且 `beginPrompt()` 必须在 guard 存在时拒绝同源 prompt。
 2. 通过 `findOmpSessionById()` 找源 session path。
 3. 生成 fork session id，使用 `SessionManager` 的 id generator，避免 handler 自己直接依赖 `randomUUID()`。
-4. 调用 `forkOmpSessionFile()` 写新 JSONL。
+4. 调用 `forkOmpSessionFile()` 写新 JSONL。如果 helper 报告源 header 不匹配、不是 session header 或 cwd/id 不匹配，映射为 `RequestError.resourceNotFound(params.sessionId)`，不得让普通 `Error` 被 SDK 包装成 internal error。
 5. 调用 `manager.createSessionWithId(forkId, params, beforePublish)`：
    - runtime factory 使用 fork id；
    - `beforePublish` 中发送 `runtime.request("switch_session", { sessionPath: forkPath })`；
    - publish 后 manager 中保存 fork 后 session。
-6. 返回 `{ sessionId: forkId }`。
+6. 如果第 5 步失败，删除本次成功独占创建的 `forkPath` 后重新抛错，避免 API 失败但 `session/list` 可看到 orphan fork。
+7. 返回 `{ sessionId: forkId }`。
 
-为支持第 3 步，`SessionManager` 需要新增两个小接口：
+为支持上述流程，`SessionManager` 需要新增三个小接口：
 
 ```ts
 reserveSessionId(): string;
 tryGetSession(sessionId: string): SessionRecord | undefined;
+beginForkSource(sessionId: string): { finish: () => void };
 ```
 
-`reserveSessionId()` 只生成 id，不修改状态。重复检测仍由 `createSessionWithId()` 负责。
+`reserveSessionId()` 只生成 id，不修改状态。重复检测仍由 `createSessionWithId()` 负责。`beginForkSource()` 必须对所有 `sessionId` 登记 guard；如果该 id 已是 live session 且有 `activePrompt`，或同 id 已有 fork guard，则抛 `SessionManagerError`。`beginPrompt()` 必须在 guard 存在时拒绝同一 session 的新 prompt，直到 `finish()` 释放。历史 session 在 fork 开始时可能还不存在于 manager，但仍需要 guard，以覆盖 fork 过程中并发 resume/load 后再 prompt 的竞态。
 
 ### Server wiring
 
@@ -182,10 +186,10 @@ sessionCapabilities: {
 | 场景 | ACP 错误 |
 |---|---|
 | 源 session 不存在或 cwd 不匹配 | `RequestError.resourceNotFound(params.sessionId)` |
-| 源 session 有 active prompt | `RequestError.invalidParams(..., "Cannot fork a session with an active prompt")` |
+| 源 session 有 active prompt，或同源 prompt 与 fork guard 冲突 | `RequestError.invalidParams(..., "Cannot fork a session with an active prompt")` |
 | 源文件 header 不匹配或不是 session header | `RequestError.resourceNotFound(params.sessionId)` |
 | fork 文件目标已存在 | `RequestError.internalError(...)`，同时测试确保 id generator 不重复；真实重复属于内部一致性问题 |
-| runtime `switch_session` 失败 | session 创建失败，不发布 fork 后 session；返回 SDK 包装后的明确 error |
+| runtime `switch_session` 失败 | session 创建失败，不发布 fork 后 session；删除本次 fork 文件；返回 SDK 包装后的明确 error |
 
 ## 测试策略
 
@@ -225,9 +229,17 @@ sessionCapabilities: {
   - 先创建源 session 并开始 prompt；
   - fork 返回 invalid params；
   - 不创建 fork 文件。
+- `forkSession rejects prompt that races with source fork guard`
+  - fork guard 存在期间，即使 guard 创建时源 session 尚不在 manager，同 id session 后续被创建，同源 `beginPrompt()` 也必须失败；
+  - guard 释放后同源 prompt 可正常开始。
 - `forkSession does not publish session when switch_session fails`
   - fake runtime `switch_session` reject；
   - manager 中没有 fork id。
+  - `findOmpSessionById("fork-session", { agentDir })` 返回 `undefined`，证明失败 fork 文件已清理。
+- `forkSession maps source helper errors to not found`
+  - 源 JSONL header 缺失、第一条有效 JSON 不是 session header、id/cwd 不匹配时 helper 抛 `OmpSessionForkSourceError`；
+  - handler 单测可通过注入 `forkSessionFile` 抛该错误来证明映射分支；
+  - 期望 `RequestError.resourceNotFound`，不得是 internal error。
 
 测试门禁还必须同步更新 `package.json`：当前 `test` / `check` 脚本显式枚举测试文件，新增 `test/unit/acp/session-fork.test.ts` 后必须加入枚举列表，否则关键 fork handler 单测不会被 `npm run check` 执行。
 
