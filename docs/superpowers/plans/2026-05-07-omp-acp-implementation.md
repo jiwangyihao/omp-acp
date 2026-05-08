@@ -249,6 +249,8 @@ node scripts/smoke-acp.mjs
 
 ### 阶段 2：OMP RPC client 与进程生命周期
 
+**状态：** 已完成。已交付 OMP RPC frame parser、runtime event 类型、process wrapper、JSONL RPC client、真实 subprocess fixture 和 contract tests；本阶段仍不接入 ACP session/prompt。
+
 **目标：** 建立可靠的 `omp --mode rpc` client，处理 ready、request/response、异步 event、stderr、exit 和 cancellation 基础设施。
 
 **自治边界：** 本阶段不做 ACP prompt 语义，只交付 runtime client API 和事件流。
@@ -277,11 +279,11 @@ node scripts/smoke-acp.mjs
 
 **验收标准：**
 
-- [ ] ready 前发送请求会被排队或明确失败；
-- [ ] malformed JSONL frame 有测试覆盖；
-- [ ] response/event 交错顺序有测试覆盖；
-- [ ] process exit 会 reject pending request；
-- [ ] Windows 路径 executable 配置有测试覆盖。
+- [x] ready 前发送请求会被排队或明确失败；
+- [x] malformed JSONL frame 有测试覆盖；
+- [x] response/event 交错顺序有测试覆盖；
+- [x] process exit 会 reject pending request；
+- [x] Windows 路径 executable 配置有测试覆盖。
 
 ### 阶段 3：session/new、session/prompt 与消息流
 
@@ -475,4 +477,4 @@ node scripts/smoke-acp.mjs
 
 ## 7. 当前下一步
 
-阶段 1 已完成。当前下一步是进入 **阶段 2：OMP RPC client 与进程生命周期**，交付可靠的 OMP JSONL RPC client 与进程生命周期管理；阶段 3 需等待阶段 2 接口稳定后再把 ACP session handler 接入真实 runtime。
+阶段 1 和阶段 2 已完成。当前下一步是进入 **阶段 3：session/new、session/prompt 与消息流**，将 ACP session handler 接入已完成的 runtime client，并保持 tool、edit、commands 等能力在后续阶段实现前不声明。
