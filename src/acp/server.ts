@@ -9,33 +9,46 @@ import {
   type Stream,
 } from "@agentclientprotocol/sdk";
 import { handleInitialize } from "./handlers/initialize.ts";
+import { startOmpRpcClient } from "../runtime/omp/rpc-client.ts";
+import { SessionManager, type RuntimeFactory } from "../session/manager.ts";
+import { handleSessionCancel } from "./handlers/session-cancel.ts";
+import { handleSessionNew } from "./handlers/session-new.ts";
+import { handleSessionPrompt } from "./handlers/session-prompt.ts";
 
 export interface StartAcpServerOptions {
   stream: Stream;
+  runtimeFactory?: RuntimeFactory;
 }
 
 export function startAcpServer(options: StartAcpServerOptions): AgentSideConnection {
-  return new AgentSideConnection(createOmpAcpAgent, options.stream);
+  const manager = new SessionManager({
+    runtimeFactory: options.runtimeFactory ?? (() => startOmpRpcClient()),
+  });
+  const connection = new AgentSideConnection((conn) => createOmpAcpAgent(conn, manager), options.stream);
+  connection.closed.then(() => manager.closeAll()).catch(() => {});
+  return connection;
 }
 
-export function createOmpAcpAgent(_connection: AgentSideConnection): Agent {
+export function createOmpAcpAgent(connection: AgentSideConnection, manager: SessionManager): Agent {
   return {
     async initialize(params) {
       return handleInitialize(params);
     },
 
-    async newSession(_params: NewSessionRequest) {
-      throw RequestError.methodNotFound("session/new");
+    async newSession(params: NewSessionRequest) {
+      return handleSessionNew(params, manager);
     },
 
     async authenticate(_params: AuthenticateRequest) {
       throw RequestError.methodNotFound("authenticate");
     },
 
-    async prompt(_params: PromptRequest) {
-      throw RequestError.methodNotFound("session/prompt");
+    async prompt(params: PromptRequest) {
+      return handleSessionPrompt(params, { manager, connection });
     },
 
-    async cancel(_params: CancelNotification) {}
+    async cancel(params: CancelNotification) {
+      return handleSessionCancel(params, manager);
+    }
   };
 }

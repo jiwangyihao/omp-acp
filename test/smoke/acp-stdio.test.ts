@@ -219,7 +219,7 @@ function initializeRequest(id: number) {
   };
 }
 
-test("initialize returns conservative phase 1 capabilities over stdio", async () => {
+test("initialize returns conservative capabilities over stdio", async () => {
   await withAcpSubprocess(async (acp) => {
     acp.send(initializeRequest(1));
 
@@ -264,41 +264,7 @@ test("unknown methods return JSON-RPC method-not-found errors", async () => {
   });
 });
 
-test("session/new returns a JSON-RPC error during phase 1", async () => {
-  await withAcpSubprocess(async (acp) => {
-    acp.send({
-      jsonrpc: "2.0",
-      id: 3,
-      method: "session/new",
-      params: { cwd: process.cwd(), mcpServers: [] },
-    });
-
-    const response = await acp.nextResponse();
-
-    assert.equal(response.id, 3);
-    assert.equal(response.result, undefined);
-    assert.equal(typeof response.error?.code, "number");
-  });
-});
-
-test("session/prompt returns a JSON-RPC error during phase 1", async () => {
-  await withAcpSubprocess(async (acp) => {
-    acp.send({
-      jsonrpc: "2.0",
-      id: 4,
-      method: "session/prompt",
-      params: { sessionId: "phase1", prompt: [{ type: "text", text: "hello" }] },
-    });
-
-    const response = await acp.nextResponse();
-
-    assert.equal(response.id, 4);
-    assert.equal(response.result, undefined);
-    assert.equal(typeof response.error?.code, "number");
-  });
-});
-
-test("authenticate returns a JSON-RPC error during phase 1", async () => {
+test("authenticate returns JSON-RPC method-not-found over stdio", async () => {
   await withAcpSubprocess(async (acp) => {
     acp.send({
       jsonrpc: "2.0",

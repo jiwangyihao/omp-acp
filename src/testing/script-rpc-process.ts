@@ -3,6 +3,7 @@ type JsonObject = Record<string, unknown>;
 const scenario = process.argv[2] ?? "normal";
 let stdinBuffer = "";
 let handledRequests = 0;
+let pendingCancelPrompt: { id: unknown; params: unknown } | undefined;
 
 function writeFrame(frame: JsonObject): void {
   process.stdout.write(`${JSON.stringify(frame)}\n`);
@@ -54,12 +55,51 @@ function handleRequest(request: JsonObject): void {
     return;
   }
 
+  if (method === "prompt") {
+    if (scenario === "session-happy") {
+      const prompt = getPromptText(request.params);
+      writeFrame({ type: "message_update", content: prompt });
+      writeFrame({ type: "message_update", kind: "thought", content: "thinking" });
+      writeFrame({ type: "response", id, result: { ok: true } });
+      return;
+    }
+
+    if (scenario === "session-error") {
+      writeFrame({ type: "extension_error", message: "boom" });
+      return;
+    }
+
+    if (scenario === "session-cancel") {
+      pendingCancelPrompt = { id, params: request.params };
+      return;
+    }
+  }
+
+  if (method === "cancel" && scenario === "session-cancel") {
+    writeFrame({ type: "response", id, result: { ok: true } });
+    const pending = pendingCancelPrompt;
+    pendingCancelPrompt = undefined;
+    if (pending !== undefined) {
+      setTimeout(() => {
+        writeFrame({ type: "message_update", content: "late message" });
+        writeFrame({ type: "response", id: pending.id, result: { ok: true } });
+      }, 50);
+    }
+    return;
+  }
   if (method === "fail") {
     writeFrame({ type: "response", id, error: "fixture failure" });
     return;
   }
 
   writeFrame({ type: "response", id, error: `unsupported fixture method: ${String(method)}` });
+}
+
+function getPromptText(params: unknown): string {
+  if (typeof params === "object" && params !== null && !Array.isArray(params) && typeof (params as { prompt?: unknown }).prompt === "string") {
+    return (params as { prompt: string }).prompt;
+  }
+  return "";
 }
 
 function handleStdinChunk(chunk: string): void {
