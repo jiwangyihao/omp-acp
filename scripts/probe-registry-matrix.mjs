@@ -66,6 +66,7 @@ try {
   const forkedSessionId = probes["session/fork"].message.result.sessionId;
   assert.equal(typeof forkedSessionId, "string");
   assert.notEqual(forkedSessionId, resumeSessionId);
+  assert.notEqual(forkedSessionId, sessionId);
 
   const forkPrompt = await acp.request("session/prompt", {
     sessionId: forkedSessionId,
