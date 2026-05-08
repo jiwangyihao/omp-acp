@@ -219,7 +219,7 @@ function initializeRequest(id: number) {
   };
 }
 
-test("initialize returns conservative capabilities over stdio", async () => {
+test("initialize returns implemented capabilities over stdio", async () => {
   await withAcpSubprocess(async (acp) => {
     acp.send(initializeRequest(1));
 
@@ -237,17 +237,21 @@ test("initialize returns conservative capabilities over stdio", async () => {
         loadSession?: boolean;
         mcpCapabilities?: { http?: boolean; sse?: boolean };
         promptCapabilities?: { image?: boolean; audio?: boolean; embeddedContext?: boolean };
+        sessionCapabilities?: { list?: unknown; resume?: unknown; fork?: unknown };
       };
     };
 
     assert.equal(result.protocolVersion, 1);
     assert.equal(result.agentInfo?.name, "omp-acp");
-    assert.equal(result.agentCapabilities?.loadSession, false);
+    assert.equal(result.agentCapabilities?.loadSession, true);
     assert.equal(result.agentCapabilities?.mcpCapabilities?.http, false);
     assert.equal(result.agentCapabilities?.mcpCapabilities?.sse, false);
-    assert.equal(result.agentCapabilities?.promptCapabilities?.image, false);
+    assert.equal(result.agentCapabilities?.promptCapabilities?.image, true);
     assert.equal(result.agentCapabilities?.promptCapabilities?.audio, false);
-    assert.equal(result.agentCapabilities?.promptCapabilities?.embeddedContext, false);
+    assert.equal(result.agentCapabilities?.promptCapabilities?.embeddedContext, true);
+    assert.equal(typeof result.agentCapabilities?.sessionCapabilities?.list, "object");
+    assert.equal(typeof result.agentCapabilities?.sessionCapabilities?.resume, "object");
+    assert.equal(result.agentCapabilities?.sessionCapabilities?.fork, undefined);
     assert.equal(acp.stderr, "");
   });
 });
