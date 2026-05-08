@@ -10,6 +10,9 @@ import {
   type NewSessionRequest,
   type PromptRequest,
   type ResumeSessionRequest,
+  type SetSessionConfigOptionRequest,
+  type SetSessionModeRequest,
+  type SetSessionModelRequest,
   type Stream,
 } from "@agentclientprotocol/sdk";
 import { handleInitialize } from "./handlers/initialize.ts";
@@ -17,6 +20,7 @@ import { startOmpRpcClient } from "../runtime/omp/rpc-client.ts";
 import { SessionManager, SessionManagerError, type RuntimeFactory } from "../session/manager.ts";
 import { handleSessionCancel } from "./handlers/session-cancel.ts";
 import { handleSessionList } from "./handlers/session-list.ts";
+import { handleSetSessionConfigOption, handleSetSessionMode, handleSetSessionModel } from "./handlers/session-config.ts";
 import { handleSessionFork } from "./handlers/session-fork.ts";
 import { handleSessionLoad } from "./handlers/session-load.ts";
 import { handleSessionNew } from "./handlers/session-new.ts";
@@ -71,6 +75,18 @@ export function createOmpAcpAgent(
 
     async unstable_forkSession(params: ForkSessionRequest) {
       return handleSessionFork(params, manager, handlerOptions);
+    },
+
+    async setSessionMode(params: SetSessionModeRequest) {
+      return handleSetSessionMode(params, manager, connection);
+    },
+
+    async unstable_setSessionModel(params: SetSessionModelRequest) {
+      return handleSetSessionModel(params, manager, connection);
+    },
+
+    async setSessionConfigOption(params: SetSessionConfigOptionRequest) {
+      return handleSetSessionConfigOption(params, manager, connection);
     },
 
     async authenticate(_params: AuthenticateRequest) {
