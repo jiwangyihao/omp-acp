@@ -36,6 +36,18 @@ function handleRequest(request: JsonObject): void {
     return;
   }
 
+  if (method === "slowEcho") {
+    setTimeout(() => {
+      writeFrame({ type: "response", id, result: { method, params: request.params } });
+    }, 50);
+    return;
+  }
+
+  if (method === "fastEcho") {
+    writeFrame({ type: "response", id, result: { method, params: request.params } });
+    return;
+  }
+
   if (method === "eventThenResponse") {
     writeFrame({ type: "message_update", content: "hello" });
     writeFrame({ type: "response", id, result: { ok: true } });

@@ -8,6 +8,7 @@ import {
   OmpRpcClientError,
   OmpRpcResponseError,
 } from "../../../src/runtime/omp/rpc-client.ts";
+import { OmpRpcFrameParseError } from "../../../src/runtime/omp/frames.ts";
 
 const repoRoot = fileURLToPath(new URL("../../..", import.meta.url));
 const fixturePath = join(repoRoot, "src", "testing", "script-rpc-process.ts");
@@ -56,16 +57,35 @@ test("request resolves matching response", async () => {
   });
 });
 
+test("concurrent requests resolve by exact response id when responses are out of order", async () => {
+  await withClient("normal", async (client) => {
+    await client.ready;
+
+    const slow = client.request("slowEcho", { value: "slow" });
+    const fast = client.request("fastEcho", { value: "fast" });
+
+    const [slowResult, fastResult] = await Promise.all([slow, fast]);
+
+    assert.deepEqual(slowResult, { method: "slowEcho", params: { value: "slow" } });
+    assert.deepEqual(fastResult, { method: "fastEcho", params: { value: "fast" } });
+  });
+});
+
 test("events can interleave before response", async () => {
   await withClient("normal", async (client) => {
     await client.ready;
-    const events: string[] = [];
-    client.onEvent((event) => events.push(event.eventType));
+    const order: string[] = [];
+    client.onEvent((event) => order.push(`event:${event.eventType}`));
 
-    const result = await client.request("eventThenResponse");
+    const response = client.request("eventThenResponse").then((result) => {
+      order.push("response");
+      return result;
+    });
+
+    const result = await response;
 
     assert.deepEqual(result, { ok: true });
-    assert.deepEqual(events, ["message_update"]);
+    assert.deepEqual(order, ["event:message_update", "response"]);
   });
 });
 
@@ -73,7 +93,13 @@ test("malformed stdout frame rejects pending request", async () => {
   await withClient("malformed-on-request", async (client) => {
     await client.ready;
 
-    await assert.rejects(client.request("echo"), OmpRpcClientError);
+    await assert.rejects(client.request("echo"), (error: unknown) => {
+      assert.ok(error instanceof OmpRpcClientError);
+      assert.match(error.message, /Failed to parse OMP RPC frame/);
+      assert.ok(error.cause instanceof OmpRpcFrameParseError);
+      assert.match(error.cause.message, /malformed JSON/);
+      return true;
+    });
   });
 });
 
