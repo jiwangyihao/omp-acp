@@ -16,6 +16,8 @@ export function translateRuntimeEventToSessionUpdate(event: RuntimeEvent): Sessi
     case "host_tool_call":
     case "host_tool_cancel":
       return undefined;
+    case "extension_ui_request":
+      throw new UnsupportedRuntimeEventError(formatExtensionUiRequest(event.raw));
     case "tool_execution_start":
       return toolExecutionStartToUpdate(event.raw);
     case "tool_execution_update":
@@ -84,4 +86,15 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function formatExtensionError(raw: Record<string, unknown>): string {
   const message = typeof raw.message === "string" && raw.message.length > 0 ? raw.message : "extension_error";
   return `Runtime extension error: ${message}`;
+}
+
+function formatExtensionUiRequest(raw: Record<string, unknown>): string {
+  const parts: string[] = [];
+  if (typeof raw.method === "string" && raw.method.length > 0) {
+    parts.push(`method=${raw.method}`);
+  }
+  if (typeof raw.id === "string" || typeof raw.id === "number") {
+    parts.push(`id=${String(raw.id)}`);
+  }
+  return parts.length === 0 ? "extension_ui_request" : `extension_ui_request ${parts.join(", ")}`;
 }

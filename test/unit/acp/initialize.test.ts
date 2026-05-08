@@ -17,10 +17,10 @@ const packageJson = JSON.parse(readFileSync(packageJsonPath, "utf8")) as {
   version: string;
 };
 
-test("buildInitialAgentCapabilities returns conservative false capabilities", () => {
+test("buildInitialAgentCapabilities declares implemented session list and load only", () => {
   const capabilities = buildInitialAgentCapabilities();
 
-  assert.equal(capabilities.loadSession, false);
+  assert.equal(capabilities.loadSession, true);
   assert.deepEqual(capabilities.promptCapabilities, {
     image: false,
     audio: false,
@@ -30,13 +30,9 @@ test("buildInitialAgentCapabilities returns conservative false capabilities", ()
     http: false,
     sse: false,
   });
+  assert.deepEqual(capabilities.sessionCapabilities, { list: {} });
 });
 
-test("buildInitialAgentCapabilities does not declare sessionCapabilities", () => {
-  const capabilities = buildInitialAgentCapabilities();
-
-  assert.equal(Object.hasOwn(capabilities, "sessionCapabilities"), false);
-});
 
 test("buildAgentInfo reads package name and version", () => {
   const agentInfo = buildAgentInfo();
@@ -60,20 +56,20 @@ test("handleInitialize returns protocol version, agent info, and capabilities wi
   assert.equal(Object.hasOwn(response, "authMethods"), false);
 });
 
-test("handleInitialize does not declare unimplemented or unverified capabilities as true", async () => {
+test("handleInitialize does not declare unimplemented capabilities as true", async () => {
   const response = await handleInitialize({
     protocolVersion: PROTOCOL_VERSION,
     clientCapabilities: {},
   });
   const capabilities = response.agentCapabilities;
 
-  assert.notEqual(capabilities?.loadSession, true);
+  assert.equal(capabilities?.loadSession, true);
+  assert.deepEqual(capabilities?.sessionCapabilities?.list, {});
+  assert.equal(Object.hasOwn(capabilities?.sessionCapabilities ?? {}, "fork"), false);
+  assert.equal(Object.hasOwn(capabilities?.sessionCapabilities ?? {}, "resume"), false);
   assert.notEqual(capabilities?.mcpCapabilities?.http, true);
   assert.notEqual(capabilities?.mcpCapabilities?.sse, true);
   assert.notEqual(capabilities?.promptCapabilities?.image, true);
   assert.notEqual(capabilities?.promptCapabilities?.audio, true);
   assert.notEqual(capabilities?.promptCapabilities?.embeddedContext, true);
-  assert.notEqual(capabilities?.sessionCapabilities?.list, true);
-  assert.notEqual(capabilities?.sessionCapabilities?.fork, true);
-  assert.notEqual(capabilities?.sessionCapabilities?.resume, true);
 });

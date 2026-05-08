@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { RuntimeEvent } from "../../../src/runtime/RuntimeEvents.ts";
-import { RuntimeEventTranslationError, translateRuntimeEventToSessionUpdate } from "../../../src/translate/events.ts";
+import { RuntimeEventTranslationError, UnsupportedRuntimeEventError, translateRuntimeEventToSessionUpdate } from "../../../src/translate/events.ts";
 
 function event(eventType: string, raw: Record<string, unknown> = {}): RuntimeEvent {
   return { type: "event", eventType, raw };
@@ -76,6 +76,16 @@ test("translateRuntimeEventToSessionUpdate fails extension_error events", () => 
 test("translateRuntimeEventToSessionUpdate leaves host tool events for the session bridge", () => {
   assert.equal(translateRuntimeEventToSessionUpdate(event("host_tool_call", { id: "host-1", toolName: "x" })), undefined);
   assert.equal(translateRuntimeEventToSessionUpdate(event("host_tool_cancel", { targetId: "host-1" })), undefined);
+});
+
+test("translateRuntimeEventToSessionUpdate fails extension_ui_request with method and id", () => {
+  assert.throws(
+    () => translateRuntimeEventToSessionUpdate(event("extension_ui_request", { method: "pick", id: "ui-1" })),
+    (error) => error instanceof UnsupportedRuntimeEventError
+      && /extension_ui_request/.test(error.message)
+      && /pick/.test(error.message)
+      && /ui-1/.test(error.message),
+  );
 });
 
 test("translateRuntimeEventToSessionUpdate maps tool execution events to ACP tool updates", () => {

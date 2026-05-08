@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { once } from "node:events";
+import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { tmpdir } from "node:os";
 import test from "node:test";
 
 const repoRoot = join(import.meta.dirname, "../..");
@@ -31,13 +33,14 @@ type RunningAcp = {
   close(): Promise<void>;
 };
 
-function startAcpSubprocess(scenario: string): RunningAcp {
+function startAcpSubprocess(scenario: string, extraEnv: NodeJS.ProcessEnv = {}): RunningAcp {
   const child = spawn(process.execPath, subprocessArgs, {
     cwd: repoRoot,
     env: {
       ...process.env,
       OMP_ACP_RUNTIME_COMMAND: process.execPath,
       OMP_ACP_RUNTIME_ARGS_JSON: JSON.stringify(["--import", "tsx", fixturePath, scenario]),
+      ...extraEnv,
     },
     stdio: ["pipe", "pipe", "pipe"],
   });
@@ -222,8 +225,8 @@ function startAcpSubprocess(scenario: string): RunningAcp {
   };
 }
 
-async function withAcpSubprocess<T>(scenario: string, run: (acp: RunningAcp) => Promise<T>): Promise<T> {
-  const acp = startAcpSubprocess(scenario);
+async function withAcpSubprocess<T>(scenario: string, run: (acp: RunningAcp) => Promise<T>, extraEnv: NodeJS.ProcessEnv = {}): Promise<T> {
+  const acp = startAcpSubprocess(scenario, extraEnv);
   try {
     return await run(acp);
   } finally {
@@ -276,6 +279,74 @@ function sessionUpdate(message: JsonRpcObject): Record<string, unknown> | undefi
   return (message.params as { update?: Record<string, unknown> } | undefined)?.update;
 }
 
+async function writeSmokeSession(agentDir: string, cwd: string, sessionId: string, lines: unknown[]) {
+  const dir = join(agentDir, "sessions", `--${sessionId}--`);
+  await mkdir(dir, { recursive: true });
+  const path = join(dir, `${sessionId}.jsonl`);
+  await writeFile(path, lines.map((line) => JSON.stringify(line)).join("\n") + "\n");
+  return path;
+}
+
+test("session/list and session/load use OMP agent dir and keep stdout JSON-RPC only", async () => {
+  const agentDir = await mkdtemp(join(tmpdir(), "omp-acp-smoke-agent-"));
+  const cwd = repoRoot;
+  const sessionPath = await writeSmokeSession(agentDir, cwd, "smoke-session", [
+    { type: "session", id: "smoke-session", cwd, timestamp: "2026-05-08T01:00:00.000Z", title: "Smoke" },
+    { type: "message", role: "user", content: "past question", timestamp: "2026-05-08T01:01:00.000Z" },
+    { type: "message", role: "assistant", content: "past answer", timestamp: "2026-05-08T01:02:00.000Z" },
+  ]);
+
+  await withAcpSubprocess("session-happy", async (acp) => {
+    acp.send(initializeRequest(30));
+    await acp.nextResponse(30);
+
+    acp.send({ jsonrpc: "2.0", id: 31, method: "session/list", params: { cwd } });
+    const listResponse = await acp.nextResponse(31);
+    assert.deepEqual(listResponse.result, {
+      sessions: [{ sessionId: "smoke-session", cwd, title: "Smoke", updatedAt: "2026-05-08T01:02:00.000Z", _meta: { ompSessionPath: sessionPath } }],
+    });
+
+    acp.send({ jsonrpc: "2.0", id: 32, method: "session/load", params: { sessionId: "smoke-session", cwd, mcpServers: [] } });
+    const userUpdate = await acp.nextMessage();
+    const assistantUpdate = await acp.nextMessage();
+    const loadResponse = await acp.nextResponse(32);
+    assert.deepEqual(loadResponse.result, {});
+    assert.equal(updateKind(userUpdate), "user_message_chunk");
+    assert.equal(textFromUpdate(userUpdate), "past question");
+    assert.equal(updateKind(assistantUpdate), "agent_message_chunk");
+    assert.equal(textFromUpdate(assistantUpdate), "past answer");
+
+    acp.send({ jsonrpc: "2.0", id: 33, method: "session/prompt", params: { sessionId: "smoke-session", prompt: [{ type: "text", text: "after load" }] } });
+    const promptUpdate = await acp.nextMessage();
+    const promptResponse = await acp.nextResponse(33);
+    assert.equal(updateKind(promptUpdate), "agent_message_chunk");
+    assert.equal(textFromUpdate(promptUpdate), "after load");
+    assert.deepEqual(promptResponse.result, { stopReason: "end_turn" });
+    assert.equal(acp.stderr, "");
+  }, { OMP_ACP_AGENT_DIR: agentDir });
+});
+
+test("runtime extension_ui_request fails session/prompt without assistant message notification", async () => {
+  await withAcpSubprocess("extension-ui-request", async (acp) => {
+    const sessionId = await initializeAndCreateSession(acp, 34, 35);
+
+    acp.send({
+      jsonrpc: "2.0",
+      id: 36,
+      method: "session/prompt",
+      params: { sessionId, prompt: [{ type: "text", text: "show ui" }] },
+    });
+
+    const response = await acp.nextResponse(36);
+
+    assert.equal(response.result, undefined);
+    assert.match(String(response.error?.data && typeof response.error.data === "object" && "details" in response.error.data ? response.error.data.details : response.error?.message), /extension_ui_request/);
+    assert.equal(
+      acp.messages.some((message) => message.method === "session/update" && updateKind(message) === "agent_message_chunk"),
+      false,
+    );
+  });
+});
 test("session/prompt streams message and thought updates before returning", async () => {
   await withAcpSubprocess("session-happy", async (acp) => {
     const sessionId = await initializeAndCreateSession(acp, 1, 2);

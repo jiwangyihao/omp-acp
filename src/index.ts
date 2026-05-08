@@ -13,6 +13,7 @@ const stream = createStdioAcpStream(stdoutWritable, stdinReadable);
 const connection = startAcpServer({
   stream,
   ...(runtimeFactory !== undefined ? { runtimeFactory } : {}),
+  ...(process.env.OMP_ACP_AGENT_DIR !== undefined && process.env.OMP_ACP_AGENT_DIR.length > 0 ? { agentDir: process.env.OMP_ACP_AGENT_DIR } : {}),
 });
 
 await connection.closed;

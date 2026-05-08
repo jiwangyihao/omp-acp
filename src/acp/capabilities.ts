@@ -15,7 +15,7 @@ interface PackageMetadata {
 
 export function buildInitialAgentCapabilities(): AgentCapabilities {
   return {
-    loadSession: false,
+    loadSession: true,
     promptCapabilities: {
       image: false,
       audio: false,
@@ -24,6 +24,9 @@ export function buildInitialAgentCapabilities(): AgentCapabilities {
     mcpCapabilities: {
       http: false,
       sse: false,
+    },
+    sessionCapabilities: {
+      list: {},
     },
   };
 }

@@ -70,6 +70,11 @@ function handleRequest(request: JsonObject): void {
     return;
   }
 
+
+  if (method === "switch_session") {
+    writeFrame({ type: "response", id, result: { ok: true, sessionPath: (request.params as { sessionPath?: unknown } | undefined)?.sessionPath } });
+    return;
+  }
   if (method === "prompt") {
     if (scenario === "session-happy") {
       const prompt = getPromptText(request.params);
@@ -84,6 +89,11 @@ function handleRequest(request: JsonObject): void {
       return;
     }
 
+
+    if (scenario === "extension-ui-request") {
+      writeFrame({ type: "extension_ui_request", method: "showDialog", id: "ui-smoke-1" });
+      return;
+    }
     if (scenario === "session-cancel") {
       pendingCancelPrompt = { id, params: request.params };
       return;

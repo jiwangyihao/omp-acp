@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { NewSessionRequest, NewSessionResponse } from "@agentclientprotocol/sdk";
+import type { LoadSessionRequest, NewSessionRequest, NewSessionResponse } from "@agentclientprotocol/sdk";
 import type { RuntimeAdapter } from "../runtime/RuntimeAdapter.ts";
 import { PromptCancellation } from "./cancellation.ts";
 
@@ -17,6 +17,7 @@ export type RuntimeFactoryInput = {
 };
 
 export type RuntimeFactory = (input: RuntimeFactoryInput) => RuntimeAdapter;
+type BeforePublishRuntime = (runtime: RuntimeAdapter) => Promise<void>;
 
 export type ActivePrompt = {
   cancellation: PromptCancellation;
@@ -49,6 +50,19 @@ export class SessionManager {
 
   async createSession(params: NewSessionRequest): Promise<NewSessionResponse> {
     const sessionId = this.#idGenerator();
+    await this.createSessionWithId(sessionId, params);
+    return { sessionId };
+  }
+
+  async createSessionWithId(
+    sessionId: string,
+    params: NewSessionRequest | LoadSessionRequest,
+    beforePublish?: BeforePublishRuntime,
+  ): Promise<SessionRecord> {
+    if (this.#sessions.has(sessionId)) {
+      throw new SessionManagerError(`Session already exists: ${sessionId}`);
+    }
+
     const input: RuntimeFactoryInput = {
       cwd: params.cwd,
       mcpServers: params.mcpServers,
@@ -60,6 +74,9 @@ export class SessionManager {
 
     try {
       await runtime.ready;
+      if (beforePublish !== undefined) {
+        await beforePublish(runtime);
+      }
     } catch (cause) {
       if (this.#pendingRuntimes.delete(runtime)) {
         await runtime.close();
@@ -69,17 +86,19 @@ export class SessionManager {
 
     this.#pendingRuntimes.delete(runtime);
     if (cleanupGeneration !== this.#cleanupGeneration) {
+      await runtime.close();
       throw new SessionManagerError(`Session creation was cancelled during cleanup for session ${sessionId}`);
     }
-    this.#sessions.set(sessionId, {
+
+    const session: SessionRecord = {
       sessionId,
       cwd: params.cwd,
       mcpServers: params.mcpServers,
       runtime,
       activePrompt: undefined,
-    });
-
-    return { sessionId };
+    };
+    this.#sessions.set(sessionId, session);
+    return session;
   }
 
   requireSession(sessionId: string): SessionRecord {
