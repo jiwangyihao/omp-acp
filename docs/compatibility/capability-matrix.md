@@ -57,7 +57,7 @@
 2. `npm run build` 通过；
 3. `npm run smoke:acp` 通过；
 4. `npm run smoke:sdk-client` 通过；
-5. `npm run smoke:omp-rpc-controls:required` 通过；skip、timeout 或 failure 均为发布门禁失败；
+5. `npm run smoke:omp-rpc-controls:required` 通过；顶层 skip、timeout、failure、`dumpTools` 不可用，或 `ask` 存在但无法验证移除/恢复，均为发布门禁失败；若 active tools 已不含 `ask`，`set_active_tools.skipped` 记录为已满足 ask 禁用边界；
 6. `npm run smoke:omp-rpc-controls:optional` 可作为开发机诊断运行，但不得作为发布通过条件；
 7. `npm run validate:registry` 通过；
 8. `npm run validate:acpx` 完成，且没有 unexpected draft failure；

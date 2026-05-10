@@ -17,13 +17,23 @@ test("optional real OMP smoke allows skipped result", () => {
   );
 });
 
-test("required real OMP smoke treats skipped set_active_tools verification as failure", () => {
+test("required real OMP smoke fails when dumpTools availability cannot prove ask boundary", () => {
   assert.deepEqual(
     classifySmokeFailure(
-      { skipped: false, set_active_tools: { skipped: true, reason: "dumpTools not available" } },
+      { skipped: false, set_active_tools: { skipped: true, reason: "dumpTools unavailable" } },
       { requireRealOmp: true },
     ),
     { exitCode: 1, failed: true },
+  );
+});
+
+test("required real OMP smoke allows set_active_tools skip when ask is already absent", () => {
+  assert.deepEqual(
+    classifySmokeFailure(
+      { skipped: false, set_active_tools: { skipped: true, reason: "active tools do not include ask; skipping to avoid disturbing user tools" } },
+      { requireRealOmp: true },
+    ),
+    { exitCode: 0, failed: false },
   );
 });
 

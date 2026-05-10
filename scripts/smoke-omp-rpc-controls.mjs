@@ -87,7 +87,7 @@ export function classifySmokeFailure(result, { requireRealOmp } = {}) {
   if (result?.skipped === true && requireRealOmp) {
     return { exitCode: 1, failed: true };
   }
-  if (result?.set_active_tools?.skipped === true && requireRealOmp) {
+  if (result?.set_active_tools?.skipped === true && requireRealOmp && !isAskAlreadyAbsentSkip(result.set_active_tools.reason)) {
     return { exitCode: 1, failed: true };
   }
   if (result?.skipped === true) {
@@ -97,6 +97,10 @@ export function classifySmokeFailure(result, { requireRealOmp } = {}) {
     return { exitCode: 1, failed: true };
   }
   return { exitCode: 0, failed: false };
+}
+
+function isAskAlreadyAbsentSkip(reason) {
+  return typeof reason === "string" && reason.includes("active tools do not include ask");
 }
 
 

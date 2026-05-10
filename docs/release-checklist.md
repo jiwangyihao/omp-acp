@@ -10,7 +10,7 @@
 | `npm run build` | 通过 | `tsup src/index.ts --format esm --platform node --target node20 --clean` 生成 `dist/index.js` |
 | stdio smoke | 通过 | `npm run smoke:acp` 使用 build output 和 fixture runtime 完成 initialize/new/prompt、`session/fork`、session controls 与 setter 后 prompt |
 | official SDK client smoke | 通过 | `npm run smoke:sdk-client` 使用 `@agentclientprotocol/sdk` 的 `ClientSideConnection` 驱动 build output，覆盖 initialize/new/prompt/list/resume/fork、setup state、session controls 与 setter 后 prompt |
-| real OMP RPC controls smoke | 历史 v0.1.0 快照；当前状态需重新验证 | 2026-05-08 发布前 fresh `npm run validate:standard` 内执行并记录为通过；该记录属于历史快照，不能代表当前发布门禁状态。当前发布必须重新运行 `npm run smoke:omp-rpc-controls:required`，skip、timeout 或 failure 均不得视为通过 |
+| real OMP RPC controls smoke | 历史 v0.1.0 快照；当前状态需重新验证 | 2026-05-08 发布前 fresh `npm run validate:standard` 内执行并记录为通过；该记录属于历史快照，不能代表当前发布门禁状态。当前发布必须重新运行 `npm run smoke:omp-rpc-controls:required`；顶层 skip、timeout、failure、`dumpTools` 不可用，或 `ask` 存在但无法验证移除/恢复，均不得视为通过。若 active tools 已不含 `ask`，记录 `set_active_tools.skipped` 并视为已满足 ask 禁用边界 |
 | Registry-style probe | 通过 | 2026-05-08 发布前 fresh `npm run validate:standard` 内执行；覆盖 capability discovery、session controls probes 与 unsupported-method 边界 |
 | `openclaw/acpx` draft assessment | 通过（有 expected draft failures） | 2026-05-08 发布前 fresh `npm run validate:standard` 内执行；固定 `d46e156...`，21 cases，11 passed，10 expected draft failures，0 unexpected；这不是 full pass |
 | Zed 手工 smoke | 未执行 | GUI 手工 smoke 未自动化；发布说明不得声称已完成 Zed GUI 手工验证 |
@@ -30,7 +30,7 @@
 - [ ] 运行 `npm run build`，确认 build output 可用。
 - [ ] 运行 `npm run smoke:acp`，确认 build output 的 ACP stdio smoke 通过。
 - [ ] 运行 `npm run smoke:sdk-client`，确认官方 TypeScript SDK client smoke 通过。
-- [ ] 运行 `npm run smoke:omp-rpc-controls:required`，确认发布机器真实 OMP RPC controls smoke 通过；skip、timeout 或 failure 均为发布门禁失败。
+- [ ] 运行 `npm run smoke:omp-rpc-controls:required`，确认发布机器真实 OMP RPC controls smoke 通过；顶层 skip、timeout、failure、`dumpTools` 不可用，或 `ask` 存在但无法验证移除/恢复，均为发布门禁失败；active tools 已不含 `ask` 时记录 `set_active_tools.skipped` 并视为通过。
 - [ ] 如需开发机诊断，可运行 `npm run smoke:omp-rpc-controls:optional`；optional smoke 可 skip，不是发布通过条件。
 - [ ] 运行 `npm run validate:registry`，确认 Registry-style capability discovery、session controls probes 与 unsupported-method 边界通过。
 - [ ] 运行 `npm run validate:acpx`，确认 acpx draft assessment 无 unexpected failure，并复核 expected draft failures 是否仍与能力矩阵一致。

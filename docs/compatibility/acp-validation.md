@@ -101,7 +101,7 @@ expected draft failures 的边界如下：
 
 本次验证中发现并修复了一个真实错误语义问题：`session/prompt` 指向未知 session 时不再被 SDK 包装成 `Internal error`，而是返回显式 `Resource not found`。对应覆盖见 `test/smoke/session-prompt.test.ts`。
 
-Stage 8B 新增真实 OMP RPC controls smoke，直接启动真实 `omp --mode rpc --session-dir <tmp> --no-title --no-extensions --no-skills --no-rules`，验证 `get_state`、`get_available_models`、`set_thinking_level`、`set_steering_mode`、`set_follow_up_mode`、`set_interrupt_mode`、`set_auto_compaction` 以及 setter 后 `get_state` 生效。发布门禁必须运行 `npm run smoke:omp-rpc-controls:required`；找不到 `omp`、ready timeout、命令失败、顶层 skip 或嵌套 `set_active_tools.skipped` 均为失败。`npm run smoke:omp-rpc-controls:optional` 仅用于开发机诊断，可 skip，不得作为发布通过条件。
+Stage 8B 新增真实 OMP RPC controls smoke，直接启动真实 `omp --mode rpc --session-dir <tmp> --no-title --no-extensions --no-skills --no-rules`，验证 `get_state`、`get_available_models`、`set_thinking_level`、`set_steering_mode`、`set_follow_up_mode`、`set_interrupt_mode`、`set_auto_compaction` 以及 setter 后 `get_state` 生效。发布门禁必须运行 `npm run smoke:omp-rpc-controls:required`；找不到 `omp`、ready timeout、命令失败、顶层 skip、`dumpTools` 不可用，或 `ask` 存在但无法完成 `set_active_tools` 移除/恢复验证，均为失败。如果当前真实 OMP active tools 已不包含 `ask`，required smoke 会记录 `set_active_tools.skipped` 并视为通过，因为该状态已经满足“不向 ACP 暴露 OMP ask”的安全边界。`npm run smoke:omp-rpc-controls:optional` 仅用于开发机诊断，可 skip，不得作为发布通过条件。
 
 ## Zed GUI smoke 的位置
 
