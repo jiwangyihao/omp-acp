@@ -228,6 +228,42 @@ test("prompt waits for runtime idle state after agent_end before returning end_t
   assert.deepEqual(await promptPromise, { stopReason: "end_turn" });
 });
 
+test("prompt echoes ACP messageId without using it for turn scheduling", async () => {
+  const { manager, connection, runtime } = await createSession();
+  const messageId = "11111111-1111-4111-8111-111111111111";
+
+  const firstPrompt = handleSessionPrompt(promptRequest({ messageId }), { manager, connection });
+  const secondPrompt = handleSessionPrompt(
+    promptRequest({ messageId: "22222222-2222-4222-8222-222222222222", prompt: [{ type: "text", text: "second" }] }),
+    { manager, connection },
+  );
+  await new Promise<void>((resolve) => setImmediate(resolve));
+
+  assert.equal(runtime.promptDeferreds.length, 1, "messageId must not create a concurrent scheduling lane");
+  assert.equal(runtime.requests.some((request) => request.method === "follow_up"), false);
+
+  finishRuntimePrompt(runtime, 0);
+  assert.deepEqual(await firstPrompt, { stopReason: "end_turn", userMessageId: messageId });
+
+  await waitForCondition(() => runtime.promptDeferreds.length === 2);
+  finishRuntimePrompt(runtime, 1);
+  assert.deepEqual(await secondPrompt, {
+    stopReason: "end_turn",
+    userMessageId: "22222222-2222-4222-8222-222222222222",
+  });
+});
+
+test("cancelled prompt echoes ACP messageId in cancelled response", async () => {
+  const { manager, connection, runtime } = await createSession();
+  const messageId = "33333333-3333-4333-8333-333333333333";
+
+  const promptPromise = handleSessionPrompt(promptRequest({ messageId }), { manager, connection });
+  await handleSessionCancel({ sessionId: "session-1" }, manager);
+
+  assert.deepEqual(await promptPromise, { stopReason: "cancelled", userMessageId: messageId });
+  finishRuntimePrompt(runtime, 0);
+});
+
 test("concurrent prompt waits for active cleanup before starting a new turn", async () => {
   const { manager, connection, runtime } = await createSession();
 

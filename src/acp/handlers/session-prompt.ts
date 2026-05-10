@@ -51,6 +51,10 @@ export async function handleSessionPrompt(
     throw new SessionManagerError(`Session failed to start active prompt: ${params.sessionId}`);
   }
   const updatePromises: Promise<void>[] = [];
+  const promptResponse = (stopReason: PromptResponse["stopReason"]): PromptResponse => ({
+    stopReason,
+    ...(params.messageId !== undefined && params.messageId !== null ? { userMessageId: params.messageId } : {}),
+  });
   const streamedAssistantMessages = new Set<string>();
   const streamedIndex = {
     has: (key: string) => streamedAssistantMessages.has(key),
@@ -215,7 +219,7 @@ export async function handleSessionPrompt(
           await manager.closeSession(params.sessionId, session.runtime);
         },
       });
-      return { stopReason: "cancelled" };
+      return promptResponse("cancelled");
     }
 
     if (cancellation.isCancelled) {
@@ -234,7 +238,7 @@ export async function handleSessionPrompt(
           await manager.closeSession(params.sessionId, session.runtime);
         },
       });
-      return { stopReason: "cancelled" };
+      return promptResponse("cancelled");
     }
 
     const drainResult = await Promise.race([
@@ -258,10 +262,10 @@ export async function handleSessionPrompt(
           await manager.closeSession(params.sessionId, session.runtime);
         },
       });
-      return { stopReason: "cancelled" };
+      return promptResponse("cancelled");
     }
     finish({ status: "idle" });
-    return { stopReason: "end_turn" };
+    return promptResponse("end_turn");
   } catch (error) {
     finish({ status: "error", error });
     throw error;
