@@ -2,13 +2,15 @@ import type { SessionUpdate } from "@agentclientprotocol/sdk";
 import type { RuntimeEvent } from "../runtime/RuntimeEvents.ts";
 import { RuntimeEventTranslationError, UnsupportedRuntimeEventError } from "./errors.ts";
 import { toolExecutionEndToUpdate, toolExecutionStartToUpdate, toolExecutionUpdateToUpdate } from "./tools.ts";
+import { messageUpdateEventToSessionUpdate } from "./messages.ts";
+import { classifyExtensionUiRequest, formatExtensionUiRequest } from "./extension-ui.ts";
 
 export { RuntimeEventTranslationError, UnsupportedRuntimeEventError } from "./errors.ts";
 
 export function translateRuntimeEventToSessionUpdate(event: RuntimeEvent): SessionUpdate | undefined {
   switch (event.eventType) {
     case "message_update":
-      return translateMessageUpdate(event.raw);
+      return messageUpdateEventToSessionUpdate(event.raw);
     case "agent_start":
       return undefined;
     case "extension_error":
@@ -17,10 +19,17 @@ export function translateRuntimeEventToSessionUpdate(event: RuntimeEvent): Sessi
     case "host_tool_cancel":
       return undefined;
     case "extension_ui_request":
-      if (isFireAndForgetExtensionUiRequest(event.raw)) {
-        return undefined;
+      switch (classifyExtensionUiRequest(event.raw)) {
+        case "fire_and_forget":
+          return undefined;
+        case "widget":
+          // Widget visibility is owned by the prompt bridge; the generic translator fallback stays silent.
+          return undefined;
+        case "confirm":
+        case "unsupported_interactive":
+        case "unsupported":
+          throw new UnsupportedRuntimeEventError(formatExtensionUiRequest(event.raw));
       }
-      throw new UnsupportedRuntimeEventError(formatExtensionUiRequest(event.raw));
     case "tool_execution_start":
       return toolExecutionStartToUpdate(event.raw);
     case "tool_execution_update":
@@ -32,86 +41,9 @@ export function translateRuntimeEventToSessionUpdate(event: RuntimeEvent): Sessi
   }
 }
 
-function translateMessageUpdate(raw: Record<string, unknown>): SessionUpdate | undefined {
-  const text = extractMessageText(raw);
 
-  if (typeof text !== "string" || text.length === 0) {
-    return undefined;
-  }
-
-  return {
-    sessionUpdate: isThought(raw) ? "agent_thought_chunk" : "agent_message_chunk",
-    content: { type: "text", text },
-  };
-}
-
-function extractMessageText(raw: Record<string, unknown>): unknown {
-  if (typeof raw.content === "string") {
-    return raw.content;
-  }
-  if (typeof raw.text === "string") {
-    return raw.text;
-  }
-  if (typeof raw.message === "string") {
-    return raw.message;
-  }
-  if (isRecord(raw.message)) {
-    if (typeof raw.message.content === "string") {
-      return raw.message.content;
-    }
-    if (typeof raw.message.text === "string") {
-      return raw.message.text;
-    }
-    if (typeof raw.message.message === "string") {
-      return raw.message.message;
-    }
-  }
-
-  return undefined;
-}
-
-function isThought(raw: Record<string, unknown>): boolean {
-  return hasThoughtMarker(raw) || (isRecord(raw.message) && hasThoughtMarker(raw.message));
-}
-
-function hasThoughtMarker(value: Record<string, unknown>): boolean {
-  return isThoughtValue(value.type) || isThoughtValue(value.kind) || isThoughtValue(value.role) || isThoughtValue(value.channel);
-}
-
-function isThoughtValue(value: unknown): boolean {
-  return value === "thought" || value === "reasoning";
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function isFireAndForgetExtensionUiRequest(raw: Record<string, unknown>): boolean {
-  switch (raw.method) {
-    case "cancel":
-    case "notify":
-    case "setStatus":
-    case "setWidget":
-    case "setTitle":
-    case "set_editor_text":
-      return true;
-    default:
-      return false;
-  }
-}
 
 function formatExtensionError(raw: Record<string, unknown>): string {
   const message = typeof raw.message === "string" && raw.message.length > 0 ? raw.message : "extension_error";
   return `Runtime extension error: ${message}`;
-}
-
-function formatExtensionUiRequest(raw: Record<string, unknown>): string {
-  const parts: string[] = [];
-  if (typeof raw.method === "string" && raw.method.length > 0) {
-    parts.push(`method=${raw.method}`);
-  }
-  if (typeof raw.id === "string" || typeof raw.id === "number") {
-    parts.push(`id=${String(raw.id)}`);
-  }
-  return parts.length === 0 ? "extension_ui_request" : `extension_ui_request ${parts.join(", ")}`;
 }

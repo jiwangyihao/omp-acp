@@ -12,6 +12,7 @@ import { SessionManager, type RuntimeFactoryInput } from "../../../src/session/m
 const CONTROL_STATE = {
   model: { provider: "p", id: "m1", name: "Model One" },
   thinkingLevel: "low",
+  sessionId: "omp-runtime-session",
   steeringMode: "all",
   followUpMode: "one-at-a-time",
   interruptMode: "immediate",
@@ -27,12 +28,24 @@ class FakeRuntime implements RuntimeAdapter {
   closed = false;
   readonly listeners = new Set<(event: RuntimeEvent) => void>();
   getStateFailure: unknown;
+  activeToolNames = ["bash"];
 
   async request(method: string, params?: unknown): Promise<unknown> {
     this.requests.push({ method, params });
+    if (method === "switch_session") {
+      this.activeToolNames = ["ask", "bash"];
+      return { ok: true };
+    }
+    if (method === "set_active_tools") {
+      this.activeToolNames = (params as { toolNames: string[] }).toolNames;
+      return { ok: true };
+    }
     if (method === "get_state") {
       if (this.getStateFailure !== undefined) throw this.getStateFailure;
-      return structuredClone(CONTROL_STATE);
+      return {
+        ...structuredClone(CONTROL_STATE),
+        dumpTools: this.activeToolNames.map((name) => ({ name })),
+      };
     }
     if (method === "get_available_models") return structuredClone(AVAILABLE_MODELS);
     if (method === "prompt") {
@@ -108,10 +121,13 @@ test("resumeSession switches runtime to OMP session path, publishes same session
   assert.ok(response.models);
   assert.ok(response.modes);
   assert.ok(response.configOptions?.some((option: { id: string }) => option.id === "model"));
+  assert.equal(Object.hasOwn(response, "runtimeSessionId"), false);
   assert.equal(inputs.length, 1);
   assert.deepEqual(inputs[0], { sessionId: "resume-me", cwd, mcpServers: [] });
   assert.deepEqual(runtimes[0]?.requests, [
     { method: "switch_session", params: { sessionPath } },
+    { method: "get_state", params: undefined },
+    { method: "set_active_tools", params: { toolNames: ["bash"] } },
     { method: "get_state", params: undefined },
     { method: "get_available_models", params: undefined },
   ]);

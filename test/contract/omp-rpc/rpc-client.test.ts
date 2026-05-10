@@ -129,6 +129,11 @@ test("request serializes real OMP command frames without legacy method or params
         params: { enabled: false },
         expected: { type: "set_auto_compaction", enabled: false },
       },
+      {
+        method: "set_active_tools",
+        params: { toolNames: ["read", "ext_tool"] },
+        expected: { type: "set_active_tools", toolNames: ["read", "ext_tool"] },
+      },
     ];
 
     for (const { method, params, expected } of cases) {
@@ -174,6 +179,19 @@ test("successful real responses resolve data or undefined", async () => {
 
     assert.deepEqual(await client.request("switch_session", { sessionPath: "sessions/two" }), { ok: true, sessionPath: "sessions/two" });
     assertControlState(await client.request("get_state"));
+  });
+});
+
+test("set_active_tools serializes selected active tool names", async () => {
+  await withClient("raw-frame-observer", async (client) => {
+    await client.ready;
+    const observed = waitForRawObservedFrame(client);
+
+    const result = await client.request("set_active_tools", { toolNames: ["read", "ext_tool"] });
+    const frame = await observed;
+
+    assert.deepEqual(omitId(frame), { type: "set_active_tools", toolNames: ["read", "ext_tool"] });
+    assert.deepEqual(result, { toolNames: ["read", "ext_tool"] });
   });
 });
 

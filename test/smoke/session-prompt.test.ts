@@ -282,6 +282,7 @@ async function initializeAndCreateSession(
   assert.equal(typeof sessionResponse.result, "object");
   assert.notEqual(sessionResponse.result, null);
   assertSessionSetupState(sessionResponse.result);
+  assert.equal((sessionResponse.result as { sessionId?: string }).sessionId, "fixture-runtime-session");
   return (sessionResponse.result as { sessionId: string }).sessionId;
 }
 
@@ -417,10 +418,12 @@ serialSmokeTest("session/list and session/load use OMP agent dir and keep stdout
     });
 
     acp.send({ jsonrpc: "2.0", id: 32, method: "session/load", params: { sessionId: "smoke-session", cwd, mcpServers: [] } });
+    const infoUpdate = await acp.nextMessage();
     const userUpdate = await acp.nextMessage();
     const assistantUpdate = await acp.nextMessage();
     const loadResponse = await acp.nextResponse(32);
     assertSessionSetupState(loadResponse.result);
+    assert.equal(updateKind(infoUpdate), "session_info_update");
     assert.equal(updateKind(userUpdate), "user_message_chunk");
     assert.equal(textFromUpdate(userUpdate), "past question");
     assert.equal(updateKind(assistantUpdate), "agent_message_chunk");
@@ -557,14 +560,92 @@ serialSmokeTest("runtime fire-and-forget extension_ui_request does not fail sess
       params: { sessionId, prompt: [{ type: "text", text: "set widget" }] },
     });
 
-    const update = await acp.nextMessage();
+    const thoughtUpdate = await acp.nextMessage();
+    const messageUpdate = await acp.nextMessage();
     const response = await acp.nextMessage();
 
-    assert.equal(update.method, "session/update");
-    assert.equal(updateKind(update), "agent_message_chunk");
-    assert.equal(textFromUpdate(update), "widget ignored");
+    assert.equal(thoughtUpdate.method, "session/update");
+    assert.equal(updateKind(thoughtUpdate), "agent_thought_chunk");
+    assert.equal(textFromUpdate(thoughtUpdate), "[autoresearch]\nstatus");
+    assert.equal(messageUpdate.method, "session/update");
+    assert.equal(updateKind(messageUpdate), "agent_message_chunk");
+    assert.equal(textFromUpdate(messageUpdate), "widget ignored");
     assert.equal(response.id, 39);
     assert.deepEqual(response.result, { stopReason: "end_turn" });
+  });
+});
+
+serialSmokeTest("session/prompt bridges OMP confirm through ACP request_permission", async () => {
+  await withAcpSubprocess("extension-ui-confirm", async (acp) => {
+    const sessionId = await initializeAndCreateSession(acp, 70, 71);
+    acp.send({
+      jsonrpc: "2.0",
+      id: 72,
+      method: "session/prompt",
+      params: { sessionId, prompt: [{ type: "text", text: "confirm" }] },
+    });
+
+    const permission = await acp.nextMessage();
+    assert.equal(permission.method, "session/request_permission");
+    assert.equal((permission.params as { sessionId?: string }).sessionId, sessionId);
+    assert.equal(typeof permission.id === "string" || typeof permission.id === "number", true);
+    const permissionId = permission.id!;
+    acp.send({ jsonrpc: "2.0", id: permissionId, result: { outcome: { outcome: "selected", optionId: "allow" } } });
+
+    const update = await acp.nextMessage();
+    const response = await acp.nextResponse(72);
+    assert.equal(updateKind(update), "agent_message_chunk");
+    assert.equal(textFromUpdate(update), "confirm accepted");
+    assert.deepEqual(response.result, { stopReason: "end_turn" });
+    assert.equal(acp.stderr, "");
+  });
+});
+
+serialSmokeTest("session/prompt bridges rejected OMP confirm through ACP request_permission", async () => {
+  await withAcpSubprocess("extension-ui-confirm-reject", async (acp) => {
+    const sessionId = await initializeAndCreateSession(acp, 73, 74);
+    acp.send({
+      jsonrpc: "2.0",
+      id: 75,
+      method: "session/prompt",
+      params: { sessionId, prompt: [{ type: "text", text: "confirm reject" }] },
+    });
+
+    const permission = await acp.nextMessage();
+    assert.equal(permission.method, "session/request_permission");
+    assert.equal((permission.params as { sessionId?: string }).sessionId, sessionId);
+    assert.equal(typeof permission.id === "string" || typeof permission.id === "number", true);
+    const permissionId = permission.id!;
+    acp.send({ jsonrpc: "2.0", id: permissionId, result: { outcome: { outcome: "selected", optionId: "reject" } } });
+
+    const update = await acp.nextMessage();
+    const response = await acp.nextResponse(75);
+    assert.equal(updateKind(update), "agent_message_chunk");
+    assert.equal(textFromUpdate(update), "confirm rejected");
+    assert.deepEqual(response.result, { stopReason: "end_turn" });
+    assert.equal(acp.stderr, "");
+  });
+});
+
+serialSmokeTest("session/prompt displays OMP setWidget lines as thought update", async () => {
+  await withAcpSubprocess("extension-ui-set-widget-display", async (acp) => {
+    const sessionId = await initializeAndCreateSession(acp, 76, 77);
+    acp.send({
+      jsonrpc: "2.0",
+      id: 78,
+      method: "session/prompt",
+      params: { sessionId, prompt: [{ type: "text", text: "widget" }] },
+    });
+
+    const widgetUpdate = await acp.nextMessage();
+    const messageUpdate = await acp.nextMessage();
+    const response = await acp.nextResponse(78);
+
+    assert.equal(updateKind(widgetUpdate), "agent_thought_chunk");
+    assert.equal(textFromUpdate(widgetUpdate), "[autoresearch]\nSearching\nDone");
+    assert.equal(updateKind(messageUpdate), "agent_message_chunk");
+    assert.deepEqual(response.result, { stopReason: "end_turn" });
+    assert.equal(acp.stderr, "");
   });
 });
 serialSmokeTest("session/prompt streams message and thought updates before returning", async () => {

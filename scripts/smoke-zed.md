@@ -7,7 +7,7 @@
 - 已运行 `npm install`。
 - 已运行 `npm run build`，并确认 `dist/index.js` 存在。
 - `omp --version` 可在启动 Zed 的环境中解析。
-- 不使用 `OMP_ACP_RUNTIME_COMMAND`、`OMP_ACP_RUNTIME_ARGS_JSON` 或 `OMP_ACP_AGENT_DIR` fixture seam。
+- 不使用 `OMP_ACP_RUNTIME_ARGS_JSON` 或 `OMP_ACP_AGENT_DIR` fixture seam；如必须设置 `OMP_ACP_RUNTIME_COMMAND` 指向非 PATH 中的 `omp`，只设置该变量即可，不要同时设置静态 `--tools` 白名单。
 - Zed 配置使用本地 checkout 的 build output，而不是未发布的 `npx` 包。
 - 如需隔离常用的汉化版 ZedG，使用官方 Zed 的 `--user-data-dir` 指向独立目录，例如 `C:/Users/34404/AppData/Local/Zed-OMP-ACP-Smoke`。
 
@@ -49,7 +49,10 @@
 11. 打开 thinking picker；切换不同模型时确认 thinking 选项按当前模型 metadata 动态裁剪，不支持 `xhigh` 的模型不得允许主动提交 `xhigh`。
 12. 分别修改模型、thinking 和 default mode 后发送 prompt；确认 prompt 仍正常完成。
 13. 确认 Zed 不再显示 steering mode、follow-up mode、interrupt mode、auto compaction 这四个 OMP-specific runtime knobs。
-14. 检查 ACP/Zed 日志；不得把 `openclaw/acpx` draft assessment 记录或描述成 ACP 官方 conformance/full pass。
+14. Trigger an OMP `confirm` path; verify Zed shows an allow/reject permission prompt. Record the prompt text and selected outcome.
+15. Trigger an OMP `setWidget` path; verify the widget lines appear as progress/thought text rather than as a rendered extension widget.
+16. Verify general Ask, `select`, `input`, and `editor` are not advertised or documented in the Zed UI as supported ACP elicitation flows.
+17. 检查 ACP/Zed 日志；不得把 `openclaw/acpx` draft assessment 记录或描述成 ACP 官方 conformance/full pass。
 
 ## 通过标准
 
@@ -57,7 +60,7 @@
 - stdout 只包含 ACP JSON-RPC frame；诊断信息不得污染 stdout。
 - `session/new`、`session/prompt`、`session/cancel`、`session/list`、`session/load`、`session/resume`、`session/fork` 和当前 session controls（model、thinking、default mode）均按当前能力矩阵表现。
 - tool call、tool update、failed/cancelled tool status 和 structured diff 可被 Zed UI 正确展示。
-- 不支持能力不会被显示成可用能力；尤其是 MCP HTTP/SSE、audio、session close、permission UX、usage update、多 OMP mode、sampling/service tier/tools toggles，以及 steering/follow-up/interrupt/auto compaction 这四个已隐藏的 OMP-specific runtime knobs。
+- 不支持能力不会被显示成可用能力；尤其是 MCP HTTP/SSE、audio、session close、permission UX beyond OMP `confirm`、usage update、多 OMP mode、sampling/service tier/tools toggles、general Ask/elicitation，以及 steering/follow-up/interrupt/auto compaction 这四个已隐藏的 OMP-specific runtime knobs。
 
 ## 失败记录模板
 

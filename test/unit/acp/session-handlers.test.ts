@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import type { NewSessionRequest, PromptRequest, SessionUpdate } from "@agentclientprotocol/sdk";
+import type { NewSessionRequest, PromptRequest, RequestPermissionRequest, RequestPermissionResponse, SessionUpdate } from "@agentclientprotocol/sdk";
 import { handleSessionCancel } from "../../../src/acp/handlers/session-cancel.ts";
 import { handleSessionNew } from "../../../src/acp/handlers/session-new.ts";
 import { handleSessionPrompt } from "../../../src/acp/handlers/session-prompt.ts";
@@ -90,11 +90,21 @@ class FakeRuntimeAdapter implements RuntimeAdapter {
 class FakeConnection {
   readonly updates: Array<{ sessionId: string; update: SessionUpdate }> = [];
   readonly updateDeferreds: Deferred<void>[] = [];
+  readonly permissionRequests: RequestPermissionRequest[] = [];
+  readonly permissionDeferreds: Deferred<RequestPermissionResponse>[] = [];
+
 
   sessionUpdate(params: { sessionId: string; update: SessionUpdate }): Promise<void> {
     this.updates.push(params);
     const deferred = new Deferred<void>();
     this.updateDeferreds.push(deferred);
+    return deferred.promise;
+  }
+
+  requestPermission(params: RequestPermissionRequest): Promise<RequestPermissionResponse> {
+    this.permissionRequests.push(params);
+    const deferred = new Deferred<RequestPermissionResponse>();
+    this.permissionDeferreds.push(deferred);
     return deferred.promise;
   }
 
@@ -191,6 +201,109 @@ test("prompt stays active until runtime emits agent_end", async () => {
   assert.deepEqual(await promptPromise, { stopReason: "end_turn" });
 });
 
+test("prompt bridges confirm permission and stays active until agent_end", async () => {
+  const { manager, connection, runtime } = await createSession();
+
+  const promptPromise = handleSessionPrompt(promptRequest(), { manager, connection });
+  assert.deepEqual(runtime.requests.at(-1), { method: "prompt", params: { message: "hello" } });
+  runtime.promptDeferreds[0]!.resolve({});
+  runtime.emit({
+    type: "event",
+    eventType: "extension_ui_request",
+    raw: { method: "confirm", id: "ui-1", title: "Approve", message: "Allow action?" },
+  });
+
+  await waitForCondition(() => connection.permissionRequests.length === 1);
+  await assert.rejects(
+    handleSessionPrompt(promptRequest({ prompt: [{ type: "text", text: "second" }] }), { manager, connection }),
+    /active prompt/,
+  );
+
+  connection.permissionDeferreds[0]!.resolve({ outcome: { outcome: "selected", optionId: "allow" } });
+  await waitForCondition(() => runtime.sentFrames.length === 1);
+  assert.deepEqual(runtime.sentFrames[0], { type: "extension_ui_response", id: "ui-1", confirmed: true });
+
+  let settled = false;
+  promptPromise.then(
+    () => {
+      settled = true;
+    },
+    () => {
+      settled = true;
+    },
+  );
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.equal(settled, false);
+
+  runtime.emit({ type: "event", eventType: "agent_end", raw: {} });
+  connection.resolveAllUpdates();
+  assert.deepEqual(await promptPromise, { stopReason: "end_turn" });
+});
+
+test("prompt fails when confirm permission request rejects", async () => {
+  const { manager, connection, runtime } = await createSession();
+
+  const promptPromise = handleSessionPrompt(promptRequest(), { manager, connection });
+  runtime.promptDeferreds[0]!.resolve({});
+  runtime.emit({
+    type: "event",
+    eventType: "extension_ui_request",
+    raw: { method: "confirm", id: "ui-1", title: "Approve", message: "Allow?" },
+  });
+
+  await waitForCondition(() => connection.permissionDeferreds.length === 1);
+  connection.permissionDeferreds[0]!.reject(new Error("permission failed"));
+
+  await assert.rejects(promptPromise, /permission failed/);
+});
+
+test("prompt fails when confirm response send rejects", async () => {
+  const { manager, connection, runtime } = await createSession();
+  runtime.nextSendError = new Error("stdin closed");
+
+  const promptPromise = handleSessionPrompt(promptRequest(), { manager, connection });
+  runtime.promptDeferreds[0]!.resolve({});
+  runtime.emit({
+    type: "event",
+    eventType: "extension_ui_request",
+    raw: { method: "confirm", id: "ui-1", title: "Approve", message: "Allow?" },
+  });
+
+  await waitForCondition(() => connection.permissionDeferreds.length === 1);
+  connection.permissionDeferreds[0]!.resolve({ outcome: { outcome: "selected", optionId: "allow" } });
+
+  await assert.rejects(promptPromise, /stdin closed/);
+});
+
+test("prompt drains setWidget thought update before returning", async () => {
+  const { manager, connection, runtime } = await createSession();
+
+  const promptPromise = handleSessionPrompt(promptRequest(), { manager, connection });
+  runtime.promptDeferreds[0]!.resolve({});
+  runtime.emit({
+    type: "event",
+    eventType: "extension_ui_request",
+    raw: { method: "setWidget", id: "w1", widgetKey: "research", widgetLines: ["Working"] },
+  });
+  runtime.emit({ type: "event", eventType: "agent_end", raw: {} });
+
+  await waitForCondition(() => connection.updates.length === 1);
+  assert.deepEqual(connection.updates[0], {
+    sessionId: "session-1",
+    update: { sessionUpdate: "agent_thought_chunk", content: { type: "text", text: "[research]\nWorking" } },
+  });
+
+  let settled = false;
+  promptPromise.then(() => {
+    settled = true;
+  });
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.equal(settled, false);
+
+  connection.resolveAllUpdates();
+  assert.deepEqual(await promptPromise, { stopReason: "end_turn" });
+});
+
 test("text prompt sends agent_message_chunk before returning end_turn", async () => {
   const { manager, connection, runtime } = await createSession();
 
@@ -212,6 +325,103 @@ test("text prompt sends agent_message_chunk before returning end_turn", async ()
   finishRuntimePrompt(runtime, 0);
   await Promise.resolve();
   assert.equal(settled, false);
+
+  connection.resolveAllUpdates();
+  assert.deepEqual(await promptPromise, { stopReason: "end_turn" });
+});
+
+test("real OMP text_delta drains before end_turn", async () => {
+  const { manager, connection, runtime } = await createSession();
+
+  const promptPromise = handleSessionPrompt(promptRequest(), { manager, connection });
+  runtime.emit({
+    type: "event",
+    eventType: "message_update",
+    raw: {
+      message: { role: "assistant", content: [{ type: "text", text: "final" }], responseId: "r1", timestamp: 1 },
+      assistantMessageEvent: { type: "text_delta", delta: "hello", contentIndex: 0 },
+    },
+  });
+  assert.deepEqual(connection.updates, [
+    {
+      sessionId: "session-1",
+      update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "hello" } },
+    },
+  ]);
+
+  let settled = false;
+  promptPromise.then(() => {
+    settled = true;
+  });
+  runtime.promptDeferreds[0]!.resolve({});
+  runtime.emit({ type: "event", eventType: "agent_end", raw: {} });
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.equal(settled, false);
+
+  connection.resolveAllUpdates();
+  assert.deepEqual(await promptPromise, { stopReason: "end_turn" });
+});
+
+test("agent_end.messages fallback emits only unstreamed assistant content", async () => {
+  const { manager, connection, runtime } = await createSession();
+
+  const promptPromise = handleSessionPrompt(promptRequest(), { manager, connection });
+  runtime.emit({
+    type: "event",
+    eventType: "message_update",
+    raw: {
+      message: { role: "assistant", responseId: "streamed", timestamp: 1, content: [{ type: "text", text: "streamed final" }] },
+      assistantMessageEvent: { type: "text_delta", delta: "streamed delta", contentIndex: 0 },
+    },
+  });
+  runtime.emit({
+    type: "event",
+    eventType: "message_update",
+    raw: {
+      message: {
+        role: "assistant",
+        responseId: "partial",
+        timestamp: 2,
+        content: [
+          { type: "text", text: "partial streamed final" },
+          { type: "text", text: "partial fallback final" },
+        ],
+      },
+      assistantMessageEvent: { type: "text_delta", delta: "partial delta", contentIndex: 0 },
+    },
+  });
+  runtime.promptDeferreds[0]!.resolve({});
+  runtime.emit({
+    type: "event",
+    eventType: "agent_end",
+    raw: {
+      messages: [
+        { role: "user", content: [{ type: "text", text: "user final" }] },
+        { role: "toolResult", content: [{ type: "text", text: "tool result final" }] },
+        { role: "assistant", responseId: "streamed", timestamp: 1, content: [{ type: "text", text: "streamed final" }] },
+        { role: "assistant", responseId: "fallback", timestamp: 3, content: [{ type: "text", text: "fallback final" }] },
+        {
+          role: "assistant",
+          responseId: "partial",
+          timestamp: 2,
+          content: [
+            { type: "text", text: "partial streamed final" },
+            { type: "text", text: "partial fallback final" },
+          ],
+        },
+      ],
+    },
+  });
+
+  assert.deepEqual(
+    connection.updates.map((entry) => entry.update),
+    [
+      { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "streamed delta" } },
+      { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "partial delta" } },
+      { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "fallback final" } },
+      { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "partial fallback final" } },
+    ],
+  );
 
   connection.resolveAllUpdates();
   assert.deepEqual(await promptPromise, { stopReason: "end_turn" });
@@ -256,6 +466,33 @@ test("cancel while prompt pending returns cancelled, requests runtime abort, sup
 
   runtime.emit({ type: "event", eventType: "message_update", raw: { content: "too late" } });
   finishRuntimePrompt(runtime, 0);
+  await waitForCondition(() => runtime.listeners.size === 0);
+
+  assert.deepEqual(connection.updates, []);
+  assert.equal(runtime.listeners.size, 0);
+});
+
+test("cancelled prompt suppresses late agent_end messages fallback and still cleans up", async () => {
+  const { manager, connection, runtime } = await createSession();
+
+  const promptPromise = handleSessionPrompt(promptRequest(), { manager, connection });
+  await handleSessionCancel({ sessionId: "session-1" }, manager);
+
+  assert.deepEqual(await promptPromise, { stopReason: "cancelled" });
+  assert.deepEqual(runtime.requests.at(-1), { method: "abort", params: undefined });
+  let messagesRead = 0;
+  const lateRaw = {
+    get messages() {
+      messagesRead += 1;
+      return [{ role: "assistant", content: ["too late fallback"] }];
+    },
+  };
+
+  runtime.emit({ type: "event", eventType: "agent_end", raw: lateRaw });
+  assert.equal(messagesRead, 0);
+
+  runtime.promptDeferreds[0]!.resolve({});
+  runtime.emit({ type: "event", eventType: "agent_end", raw: {} });
   await waitForCondition(() => runtime.listeners.size === 0);
 
   assert.deepEqual(connection.updates, []);
@@ -403,6 +640,32 @@ test("event translation failure stops accepting same-turn assistant updates", as
 
   await assert.rejects(promptPromise, /Runtime extension error: boom/);
   assert.deepEqual(connection.updates, []);
+});
+
+test("event failure suppresses late duplicate agent_end messages fallback and preserves rejection", async () => {
+  const { manager, connection, runtime } = await createSession();
+
+  const promptPromise = handleSessionPrompt(promptRequest(), { manager, connection });
+  runtime.emit({ type: "event", eventType: "message_update", raw: { content: "first" } });
+  finishRuntimePrompt(runtime, 0);
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  let messagesRead = 0;
+  const lateRaw = {
+    get messages() {
+      messagesRead += 1;
+      return [{ role: "assistant", content: ["should not fallback"] }];
+    },
+  };
+
+  runtime.emit({ type: "event", eventType: "extension_error", raw: { message: "boom" } });
+  runtime.emit({ type: "event", eventType: "agent_end", raw: lateRaw });
+  assert.equal(messagesRead, 0);
+  connection.updateDeferreds[0]!.resolve();
+  await assert.rejects(promptPromise, /Runtime extension error: boom/);
+  assert.deepEqual(connection.updates, [
+    { sessionId: "session-1", update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "first" } } },
+  ]);
+  assert.equal(runtime.listeners.size, 0);
 });
 
 

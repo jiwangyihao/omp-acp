@@ -3,66 +3,102 @@ import { spawn } from "node:child_process";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 const timeoutMs = Number.parseInt(process.env.OMP_ACP_SMOKE_TIMEOUT_MS ?? "30000", 10);
-const commandSpec = resolveCommandSpec();
-const sessionDir = await mkdtemp(join(tmpdir(), "omp-acp-rpc-controls-"));
-let rpc;
 
-try {
-  rpc = startOmpRpc(commandSpec, sessionDir);
-  await rpc.ready;
-
-  const initialState = await rpc.request("get_state");
-  const modelsResponse = await rpc.request("get_available_models");
-  const models = normalizeModels(modelsResponse);
-  const selectedModel = selectCurrentModel(initialState, models);
-  const thinkingLevel = selectThinkingLevel(selectedModel);
-
-  const thinking = await rpc.request("set_thinking_level", { level: thinkingLevel });
-  const steering = await rpc.request("set_steering_mode", { mode: "all" });
-  const followUp = await rpc.request("set_follow_up_mode", { mode: "one-at-a-time" });
-  const interrupt = await rpc.request("set_interrupt_mode", { mode: "wait" });
-  const autoCompaction = await rpc.request("set_auto_compaction", { enabled: false });
-  const finalState = await rpc.request("get_state");
-
-  assertStateValue(finalState, "thinkingLevel", thinkingLevel, "set_thinking_level");
-  assertStateValue(finalState, "steeringMode", "all", "set_steering_mode");
-  assertStateValue(finalState, "followUpMode", "one-at-a-time", "set_follow_up_mode");
-  assertStateValue(finalState, "interruptMode", "wait", "set_interrupt_mode");
-  assertStateValue(finalState, "autoCompactionEnabled", false, "set_auto_compaction");
-
-  await rpc.close();
-  rpc = undefined;
-
-  console.log(JSON.stringify({
-    skipped: false,
-    command: commandSpec.command,
-    model: summarizeModel(selectedModel),
-    setters: {
-      set_thinking_level: { success: true, level: thinkingLevel, response: summarizeResponse(thinking) },
-      set_steering_mode: { success: true, mode: "all", response: summarizeResponse(steering) },
-      set_follow_up_mode: { success: true, mode: "one-at-a-time", response: summarizeResponse(followUp) },
-      set_interrupt_mode: { success: true, mode: "wait", response: summarizeResponse(interrupt) },
-      set_auto_compaction: { success: true, enabled: false, response: summarizeResponse(autoCompaction) },
-    },
-    finalState: summarizeState(finalState),
-  }, null, 2));
-} catch (error) {
-  if (isSpawnNotFound(error)) {
-    console.log(JSON.stringify({ skipped: true, reason: "omp not found" }));
-  } else {
-    console.error(JSON.stringify({
-      skipped: false,
-      command: error?.command ?? commandSpec.command,
-      error: error instanceof Error ? error.message : String(error),
-    }, null, 2));
-    process.exitCode = 1;
-  }
-} finally {
-  await rpc?.close().catch(() => {});
-  await rm(sessionDir, { recursive: true, force: true });
+if (process.argv[1] !== undefined && fileURLToPath(import.meta.url) === process.argv[1]) {
+  await main();
 }
+
+async function main() {
+  const commandSpec = resolveCommandSpec();
+  const requireRealOmp = process.argv.includes("--require-real-omp") || process.env.OMP_ACP_REQUIRE_REAL_OMP === "1";
+  const sessionDir = await mkdtemp(join(tmpdir(), "omp-acp-rpc-controls-"));
+  let rpc;
+
+  try {
+    rpc = startOmpRpc(commandSpec, sessionDir);
+    await rpc.ready;
+
+    const initialState = await rpc.request("get_state");
+    const setActiveTools = await verifySetActiveToolsRoundTrip(
+      initialState,
+      (command, params) => rpc.request(command, params),
+      () => rpc.request("get_state"),
+    );
+    const modelsResponse = await rpc.request("get_available_models");
+    const models = normalizeModels(modelsResponse);
+    const selectedModel = selectCurrentModel(initialState, models);
+    const thinkingLevel = selectThinkingLevel(selectedModel);
+
+    const thinking = await rpc.request("set_thinking_level", { level: thinkingLevel });
+    const steering = await rpc.request("set_steering_mode", { mode: "all" });
+    const followUp = await rpc.request("set_follow_up_mode", { mode: "one-at-a-time" });
+    const interrupt = await rpc.request("set_interrupt_mode", { mode: "wait" });
+    const autoCompaction = await rpc.request("set_auto_compaction", { enabled: false });
+    const finalState = await rpc.request("get_state");
+
+    assertStateValue(finalState, "thinkingLevel", thinkingLevel, "set_thinking_level");
+    assertStateValue(finalState, "steeringMode", "all", "set_steering_mode");
+    assertStateValue(finalState, "followUpMode", "one-at-a-time", "set_follow_up_mode");
+    assertStateValue(finalState, "interruptMode", "wait", "set_interrupt_mode");
+    assertStateValue(finalState, "autoCompactionEnabled", false, "set_auto_compaction");
+
+    await rpc.close();
+    rpc = undefined;
+
+    const result = {
+      skipped: false,
+      command: commandSpec.command,
+      model: summarizeModel(selectedModel),
+      setters: {
+        set_thinking_level: { success: true, level: thinkingLevel, response: summarizeResponse(thinking) },
+        set_steering_mode: { success: true, mode: "all", response: summarizeResponse(steering) },
+        set_follow_up_mode: { success: true, mode: "one-at-a-time", response: summarizeResponse(followUp) },
+        set_interrupt_mode: { success: true, mode: "wait", response: summarizeResponse(interrupt) },
+        set_auto_compaction: { success: true, enabled: false, response: summarizeResponse(autoCompaction) },
+      },
+      set_active_tools: setActiveTools,
+      finalState: summarizeState(finalState),
+    };
+    console.log(JSON.stringify(result, null, 2));
+    process.exitCode = classifySmokeFailure(result, { requireRealOmp }).exitCode;
+  } catch (error) {
+    if (isSpawnNotFound(error)) {
+      const result = { skipped: true, reason: "omp not found" };
+      console.log(JSON.stringify(result));
+      process.exitCode = classifySmokeFailure(result, { requireRealOmp }).exitCode;
+    } else {
+      console.error(JSON.stringify({
+        skipped: false,
+        command: error?.command ?? commandSpec.command,
+        error: error instanceof Error ? error.message : String(error),
+      }, null, 2));
+      process.exitCode = 1;
+    }
+  } finally {
+    await rpc?.close().catch(() => {});
+    await rm(sessionDir, { recursive: true, force: true });
+  }
+}
+
+export function classifySmokeFailure(result, { requireRealOmp } = {}) {
+  if (result?.skipped === true && requireRealOmp) {
+    return { exitCode: 1, failed: true };
+  }
+  if (result?.set_active_tools?.skipped === true && requireRealOmp) {
+    return { exitCode: 1, failed: true };
+  }
+  if (result?.skipped === true) {
+    return { exitCode: 0, failed: false };
+  }
+  if (result?.success === false) {
+    return { exitCode: 1, failed: true };
+  }
+  return { exitCode: 0, failed: false };
+}
+
 
 function resolveCommandSpec() {
   const configured = process.env.OMP_ACP_OMP_COMMAND;
@@ -73,7 +109,7 @@ function resolveCommandSpec() {
   return { command: "omp", args: [], fromEnv: false };
 }
 
-function startOmpRpc(commandSpec, sessionDir) {
+export function startOmpRpc(commandSpec, sessionDir) {
   const args = [
     ...commandSpec.args,
     "--mode", "rpc",
@@ -112,12 +148,15 @@ function startOmpRpc(commandSpec, sessionDir) {
     spawnError = error;
     rejectAll(error);
   });
-  child.once("close", (code, signal) => {
-    closed = true;
-    flushStdoutBuffer();
-    if (waiters.length > 0) {
-      rejectAll(new Error(`OMP RPC process closed before response (code ${code}, signal ${signal}, stderr ${stderr.trim()})`));
-    }
+  const closedPromise = new Promise((resolve) => {
+    child.once("close", (code, signal) => {
+      closed = true;
+      flushStdoutBuffer();
+      if (waiters.length > 0) {
+        rejectAll(new Error(`OMP RPC process closed before response (code ${code}, signal ${signal}, stderr ${stderr.trim()})`));
+      }
+      resolve({ code, signal });
+    });
   });
 
   const ready = waitFor((message) => message.type === "ready", "ready frame");
@@ -219,7 +258,11 @@ function startOmpRpc(commandSpec, sessionDir) {
       if (!closed) {
         child.kill();
       }
-    },
+      await Promise.race([
+        closedPromise,
+        new Promise((resolve) => setTimeout(resolve, 1000)),
+      ]);
+    }
   };
 }
 
@@ -263,6 +306,53 @@ function supportedThinkingLevels(model) {
     return ["off"];
   }
   return ["off", ...order.slice(min, max + 1)];
+}
+
+export async function verifySetActiveToolsRoundTrip(initialState, request, rereadState) {
+  const originalToolNames = extractDumpToolNames(initialState);
+  if (originalToolNames === undefined) {
+    return { skipped: true, reason: "dumpTools unavailable" };
+  }
+  if (!originalToolNames.includes("ask")) {
+    return { skipped: true, reason: "active tools do not include ask; skipping to avoid disturbing user tools" };
+  }
+
+  const withoutAsk = originalToolNames.filter((name) => name !== "ask");
+  await request("set_active_tools", { toolNames: withoutAsk });
+  try {
+    const removedState = await rereadState();
+    const removedToolNames = extractDumpToolNames(removedState);
+    assert.notEqual(removedToolNames, undefined, "set_active_tools verification requires dumpTools after removing ask");
+    assert.equal(removedToolNames.includes("ask"), false, "set_active_tools did not remove ask");
+    for (const toolName of withoutAsk) {
+      assert.equal(removedToolNames.includes(toolName), true, `set_active_tools unexpectedly removed ${toolName}`);
+    }
+  } finally {
+    await request("set_active_tools", { toolNames: originalToolNames });
+  }
+
+  const restoredState = await rereadState();
+  const restoredToolNames = extractDumpToolNames(restoredState);
+  assert.notEqual(restoredToolNames, undefined, "set_active_tools verification requires dumpTools after restoring tools");
+  assert.deepEqual(new Set(restoredToolNames), new Set(originalToolNames), "set_active_tools did not restore original tools");
+
+  return { skipped: false, removedAsk: true, restored: true, activeToolCount: originalToolNames.length };
+}
+
+function extractDumpToolNames(state) {
+  const dumpTools = asRecord(state)?.dumpTools;
+  if (!Array.isArray(dumpTools)) {
+    return undefined;
+  }
+  const names = [];
+  for (const tool of dumpTools) {
+    const name = typeof tool === "string" ? tool : asRecord(tool)?.name;
+    if (typeof name !== "string" || name.length === 0) {
+      return undefined;
+    }
+    names.push(name);
+  }
+  return names;
 }
 
 function assertStateValue(state, key, expected, command) {

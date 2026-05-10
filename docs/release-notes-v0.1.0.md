@@ -27,7 +27,7 @@
 - `npm run check`
 - `npm run smoke:acp`
 - `npm run smoke:sdk-client`
-- `npm run smoke:omp-rpc-controls`
+- `npm run smoke:omp-rpc-controls:required`
 - `npm run validate:registry`
 - `npm run validate:acpx`
 - `npm pack --dry-run --json`

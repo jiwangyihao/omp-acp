@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { createOmpAcpAgent } from "../../../src/acp/server.ts";
 import { handleSessionNew } from "../../../src/acp/handlers/session-new.ts";
+import { toPublicSessionSetupState } from "../../../src/acp/session-controls.ts";
 import type { RuntimeAdapter, RuntimeDiagnostics } from "../../../src/runtime/RuntimeAdapter.ts";
 import { SessionManager, type RuntimeFactoryInput } from "../../../src/session/manager.ts";
 import type { Agent, SessionConfigOption, SessionUpdate } from "@agentclientprotocol/sdk";
@@ -13,8 +14,9 @@ const CONTROL_STATE = {
   followUpMode: "one-at-a-time",
   interruptMode: "immediate",
   autoCompactionEnabled: true,
+  sessionId: "omp-runtime-session",
+  dumpTools: [{ name: "read" }, { name: "ask" }, { name: "plugin_tool" }],
 };
-
 const AVAILABLE_MODELS = [
   { provider: "p", id: "m1", name: "Model One", thinking: { minLevel: "minimal", maxLevel: "high" } },
   { provider: "p", id: "m2", name: "Model Two", thinking: { minLevel: "minimal", maxLevel: "medium" } },
@@ -90,21 +92,25 @@ async function createAgentHarness(options: { getStateFailure?: unknown } = {}) {
   return { ...harness, agent, connection, session };
 }
 
-test("handleSessionNew returns setup state before publishing the session", async () => {
+test("handleSessionNew disables ask before building setup state and publishes runtime session id", async () => {
   const { manager, runtimes, inputs } = createHarness();
 
   const response = await handleSessionNew({ cwd: "/workspace/project", mcpServers: [] }, manager);
 
-  assert.equal(response.sessionId, "session-1");
+  assert.equal(response.sessionId, "omp-runtime-session");
   assert.ok(response.models);
   assert.ok(response.modes);
   assert.ok(response.configOptions?.some((option) => option.id === "model"));
+  assert.equal(Object.hasOwn(response, "runtimeSessionId"), false);
   assert.deepEqual(inputs, [{ cwd: "/workspace/project", mcpServers: [], sessionId: "session-1" }]);
   assert.deepEqual(runtimes[0]?.requests, [
     { method: "get_state", params: undefined },
+    { method: "set_active_tools", params: { toolNames: ["read", "plugin_tool"] } },
+    { method: "get_state", params: undefined },
     { method: "get_available_models", params: undefined },
   ]);
-  assert.equal(manager.tryGetSession("session-1")?.runtime, runtimes[0]);
+  assert.equal(manager.tryGetSession("session-1"), undefined);
+  assert.equal(manager.tryGetSession("omp-runtime-session")?.runtime, runtimes[0]);
 });
 
 test("handleSessionNew does not publish a session when setup state build fails", async () => {
@@ -114,6 +120,22 @@ test("handleSessionNew does not publish a session when setup state build fails",
 
   assert.equal(manager.tryGetSession("session-1"), undefined);
   assert.equal(runtimes[0]?.closed, true);
+});
+
+test("toPublicSessionSetupState removes internal runtime session id", () => {
+  const response = toPublicSessionSetupState({
+    models: { availableModels: [{ modelId: "p/m1", name: "Model One" }], currentModelId: "p/m1" },
+    modes: { availableModes: [{ id: "default", name: "Default" }], currentModeId: "default" },
+    configOptions: [],
+    runtimeSessionId: "internal",
+  });
+
+  assert.deepEqual(response, {
+    models: { availableModels: [{ modelId: "p/m1", name: "Model One" }], currentModelId: "p/m1" },
+    modes: { availableModes: [{ id: "default", name: "Default" }], currentModeId: "default" },
+    configOptions: [],
+  });
+  assert.equal(Object.hasOwn(response, "runtimeSessionId"), false);
 });
 
 test("setSessionModel updates runtime model and emits config options", async () => {

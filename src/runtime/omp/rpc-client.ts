@@ -292,6 +292,10 @@ function buildCommandFrame(id: OmpRpcRequestId, method: string, params: unknown)
       return { id, type: method, mode: requireString(requireRecord(params, method), "mode", method) };
     case "set_auto_compaction":
       return { id, type: method, enabled: requireBoolean(requireRecord(params, method), "enabled", method) };
+    case "set_active_tools": {
+      const toolNames = requireStringArray(requireRecord(params, method), "toolNames", method);
+      return { id, type: method, toolNames };
+    }
     default:
       throw new OmpRpcClientError(`Unsupported OMP RPC method: ${method}`);
   }
@@ -317,6 +321,14 @@ function requireBoolean(params: Record<string, unknown>, field: string, command:
   const value = params[field];
   if (typeof value !== "boolean") {
     throw new OmpRpcClientError(`OMP RPC ${command} params.${field} must be a boolean`);
+  }
+  return value;
+}
+
+function requireStringArray(params: Record<string, unknown>, field: string, command: string): string[] {
+  const value = params[field];
+  if (!Array.isArray(value) || value.some((item) => typeof item !== "string")) {
+    throw new OmpRpcClientError(`OMP RPC ${command} params.${field} must be an array of strings`);
   }
   return value;
 }

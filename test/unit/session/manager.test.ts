@@ -50,6 +50,70 @@ class FakeRuntimeAdapter implements RuntimeAdapter {
   }
 }
 
+class ReadyRuntimeAdapter implements RuntimeAdapter {
+  readonly diagnostics: RuntimeDiagnostics = { stderr: "" };
+  readonly ready = Promise.resolve();
+  readonly requests: Array<{ method: string; params?: unknown }> = [];
+
+  constructor(private readonly state: unknown) {}
+
+  async request(method: string, params?: unknown): Promise<unknown> {
+    this.requests.push({ method, params });
+    if (method === "get_state") return structuredClone(this.state);
+    if (method === "set_active_tools") return { toolNames: (params as { toolNames: string[] }).toolNames };
+    throw new Error(`Unexpected method ${method}`);
+  }
+
+  send(_frame: Record<string, unknown>): Promise<void> {
+    return Promise.resolve(undefined);
+  }
+
+  onEvent(_listener: (event: RuntimeEvent) => void): () => void {
+    return () => {};
+  }
+
+  close(): Promise<void> {
+    return Promise.resolve(undefined);
+  }
+}
+
+class SequencedRuntimeAdapter implements RuntimeAdapter {
+  readonly diagnostics: RuntimeDiagnostics = { stderr: "" };
+  readonly ready = Promise.resolve();
+  readonly requests: Array<{ method: string; params?: unknown }> = [];
+  closeCalls = 0;
+
+  constructor(
+    private readonly states: unknown[],
+    private readonly options: { failSetActiveTools?: boolean } = {},
+  ) {}
+
+  async request(method: string, params?: unknown): Promise<unknown> {
+    this.requests.push({ method, params });
+    if (method === "get_state") return structuredClone(this.states.shift() ?? {});
+    if (method === "set_active_tools") {
+      if (this.options.failSetActiveTools === true) {
+        throw new Error("set_active_tools failed");
+      }
+      return { toolNames: (params as { toolNames: string[] }).toolNames };
+    }
+    if (method === "switch_session") return undefined;
+    throw new Error(`Unexpected method ${method}`);
+  }
+
+  send(_frame: Record<string, unknown>): Promise<void> {
+    return Promise.resolve(undefined);
+  }
+
+  onEvent(_listener: (event: RuntimeEvent) => void): () => void {
+    return () => {};
+  }
+
+  async close(): Promise<void> {
+    this.closeCalls += 1;
+  }
+}
+
 function newSessionRequest(overrides: Partial<NewSessionRequest> = {}): NewSessionRequest {
   return {
     cwd: "/workspace/project",
@@ -74,6 +138,52 @@ function createManager() {
 
   return { manager, runtimes, inputs };
 }
+
+test("createSession disables only OMP ask while preserving other active tools", async () => {
+  const runtimes: ReadyRuntimeAdapter[] = [];
+  const manager = new SessionManager({
+    idGenerator: () => "session-1",
+    runtimeFactory() {
+      const runtime = new ReadyRuntimeAdapter({
+        dumpTools: [
+          { name: "read" },
+          { name: "ask" },
+          { name: "plugin_tool" },
+          { name: "mcp__server__tool" },
+        ],
+      });
+      runtimes.push(runtime);
+      return runtime;
+    },
+  });
+
+  await manager.createSession(newSessionRequest());
+
+  assert.deepEqual(runtimes[0]!.requests, [
+    { method: "get_state", params: undefined },
+    { method: "set_active_tools", params: { toolNames: ["read", "plugin_tool", "mcp__server__tool"] } },
+  ]);
+});
+
+test("createSession does not mutate active tools when ask is already absent", async () => {
+  const runtimes: ReadyRuntimeAdapter[] = [];
+  const manager = new SessionManager({
+    idGenerator: () => "session-1",
+    runtimeFactory() {
+      const runtime = new ReadyRuntimeAdapter({
+        dumpTools: [{ name: "read" }, { name: "plugin_tool" }],
+      });
+      runtimes.push(runtime);
+      return runtime;
+    },
+  });
+
+  await manager.createSession(newSessionRequest());
+
+  assert.deepEqual(runtimes[0]!.requests, [
+    { method: "get_state", params: undefined },
+  ]);
+});
 
 test("createSession awaits runtime readiness and stores the runtime", async () => {
   const { manager, runtimes, inputs } = createManager();
@@ -158,6 +268,91 @@ test("abandoned session creation cannot clear a later pending reservation", asyn
   await laterCreate;
 });
 
+test("createSessionWithId rejects a final runtime session id reserved by another pending session", async () => {
+  const { manager, runtimes } = createManager();
+  let releaseB!: () => void;
+
+  const pendingB = manager.createSessionWithId("session-b", newSessionRequest(), async () => {
+    await new Promise<void>((resolve) => {
+      releaseB = resolve;
+    });
+  });
+  assert.equal(runtimes.length, 1);
+  runtimes[0]!.readyDeferred.resolve();
+
+  const pendingA = manager.createSessionWithId("session-a", newSessionRequest(), {
+    afterGuard: async () => ({ sessionId: "session-b" }),
+  });
+  assert.equal(runtimes.length, 2);
+  runtimes[1]!.readyDeferred.resolve();
+
+  await assert.rejects(pendingA, /Session already exists: session-b/);
+  assert.equal(runtimes[1]!.closeCalls, 1);
+
+  releaseB();
+  await pendingB;
+  assert.equal(manager.tryGetSession("session-b")?.sessionId, "session-b");
+});
+
+test("createSessionWithId closes runtime when final runtime session id already exists", async () => {
+  const { manager, runtimes } = createManager();
+
+  const existingCreate = manager.createSessionWithId("existing", newSessionRequest());
+  runtimes[0]!.readyDeferred.resolve();
+  await existingCreate;
+
+  const duplicateCreate = manager.createSessionWithId("new-id", newSessionRequest(), {
+    afterGuard: async () => ({ sessionId: "existing" }),
+  });
+  assert.equal(runtimes.length, 2);
+  runtimes[1]!.readyDeferred.resolve();
+
+  await assert.rejects(duplicateCreate, /Session already exists: existing/);
+  assert.equal(runtimes[1]!.closeCalls, 1);
+  assert.equal(manager.tryGetSession("existing")?.sessionId, "existing");
+});
+
+test("createSessionWithId runs ask guard after beforeGuard", async () => {
+  const runtime = new SequencedRuntimeAdapter([
+    { dumpTools: [{ name: "ask" }, { name: "bash" }] },
+  ]);
+  const manager = new SessionManager({ runtimeFactory: () => runtime });
+
+  await manager.createSessionWithId("session-1", newSessionRequest(), {
+    beforeGuard: async (guardedRuntime) => {
+      await guardedRuntime.request("switch_session", { sessionPath: "target-session" });
+      return { sessionId: "session-1" };
+    },
+  });
+
+  assert.deepEqual(runtime.requests, [
+    { method: "switch_session", params: { sessionPath: "target-session" } },
+    { method: "get_state", params: undefined },
+    { method: "set_active_tools", params: { toolNames: ["bash"] } },
+  ]);
+});
+
+test("createSessionWithId does not publish when post-switch ask disable fails", async () => {
+  const runtime = new SequencedRuntimeAdapter([{ dumpTools: [{ name: "ask" }] }], { failSetActiveTools: true });
+  const manager = new SessionManager({ runtimeFactory: () => runtime });
+
+  await assert.rejects(
+    manager.createSessionWithId("session-1", newSessionRequest(), {
+      beforeGuard: async () => ({ sessionId: "session-1" }),
+      afterGuard: async () => undefined,
+    }),
+    /Runtime failed to become ready for session session-1/,
+  );
+
+  assert.equal(runtime.closeCalls, 1);
+  assert.equal(manager.tryGetSession("session-1"), undefined);
+
+  const retryCreate = manager.createSessionWithId("session-1", newSessionRequest());
+  assert.equal(manager.tryGetSession("session-1"), undefined);
+  await retryCreate;
+  assert.equal(manager.tryGetSession("session-1")?.sessionId, "session-1");
+});
+
 test("requireSession throws SessionManagerError for unknown sessions", () => {
   const { manager } = createManager();
 
@@ -204,7 +399,7 @@ test("cancelPrompt marks the active prompt cancelled and requests runtime abort"
   await manager.cancelPrompt("session-1");
 
   assert.equal(active.cancellation.isCancelled, true);
-  assert.deepEqual(runtimes[0]!.requests, [{ method: "abort", params: undefined }]);
+  assert.deepEqual(runtimes[0]!.requests, [{ method: "get_state", params: undefined }, { method: "abort", params: undefined }]);
 });
 
 test("cancelPrompt ignores runtime cancel request failures", async () => {
@@ -218,7 +413,7 @@ test("cancelPrompt ignores runtime cancel request failures", async () => {
   await manager.cancelPrompt("session-1");
 
   assert.equal(active.cancellation.isCancelled, true);
-  assert.deepEqual(runtimes[0]!.requests, [{ method: "abort", params: undefined }]);
+  assert.deepEqual(runtimes[0]!.requests, [{ method: "get_state", params: undefined }, { method: "abort", params: undefined }]);
 });
 
 test("closeAll cancels active prompts, closes runtimes, and clears sessions", async () => {

@@ -1,5 +1,7 @@
 import type { SessionUpdate, ToolCallLocation, ToolCallStatus, ToolKind } from "@agentclientprotocol/sdk";
+import { contentItemsToToolCallContent } from "./content.ts";
 import { isUnsupportedDiffResult, translateDiffPayloadToToolCallContent } from "./diffs.ts";
+import { parseToolInput, sanitizeTextForAcp, sanitizeToolInput, sanitizeToolOutputForAcp } from "./safety.ts";
 
 type ToolEventKind = "tool_execution_start" | "tool_execution_update" | "tool_execution_end";
 
@@ -73,10 +75,11 @@ export function toolExecutionStartToUpdate(raw: Record<string, unknown>): Sessio
   const name = typeof raw.toolName === "string" ? raw.toolName : typeof raw.name === "string" ? raw.name : toolCallId;
   const rawInput = extractRawInput(raw);
   const locations = extractLocations(raw);
+  const title = typeof raw.title === "string" ? sanitizeTextForAcp(raw.title) : buildToolTitle(name, rawInput);
   const update: SessionUpdate = {
     sessionUpdate: "tool_call",
     toolCallId,
-    title: typeof raw.title === "string" ? raw.title : buildToolTitle(name, rawInput),
+    title: title.length > 0 ? title : buildToolTitle(name, rawInput),
     kind: normalizeToolKind(raw.kind ?? raw.name ?? raw.toolName),
     status: normalizeToolStatus(raw.status, "tool_execution_start"),
   };
@@ -102,18 +105,20 @@ export function toolExecutionEndToUpdate(raw: Record<string, unknown>): SessionU
 }
 
 function toolExecutionProgressToUpdate(raw: Record<string, unknown>, eventType: "tool_execution_update" | "tool_execution_end"): SessionUpdate {
-  const rawOutput = normalizeRawOutput(raw);
+  const output = normalizedOutputCandidate(raw);
+  const rawOutput = output.rawOutput;
   const status = normalizeToolStatus(raw.status, eventType);
-  const content = extractContent(raw);
+  const content = extractContent(raw, output);
 
   if (raw.diff !== undefined) {
     const diff = translateDiffPayloadToToolCallContent(raw.diff);
     if (isUnsupportedDiffResult(diff)) {
+      const rawOutput = sanitizeToolOutputForAcp(diff.rawOutput) ?? { error: "Unsupported diff payload" };
       return {
         sessionUpdate: "tool_call_update",
         toolCallId: extractToolCallId(raw),
         status: "failed",
-        rawOutput: diff.rawOutput,
+        rawOutput,
       };
     }
     content.push(...diff);
@@ -159,44 +164,76 @@ function extractLocations(raw: Record<string, unknown>): Array<ToolCallLocation>
   return [location];
 }
 
-function normalizeRawOutput(raw: Record<string, unknown>): unknown {
+function normalizedOutputCandidate(raw: Record<string, unknown>): { rawOutput: unknown; text?: string; source?: "rawOutput" | "output" | "partialResult" | "result" | "content" } {
   if (raw.status === "cancelled" || raw.status === "canceled") {
-    return { cancelled: true };
+    return { rawOutput: sanitizeToolOutputForAcp({ cancelled: true }) };
   }
   if (raw.error !== undefined) {
-    return { error: raw.error };
+    return { rawOutput: sanitizeToolOutputForAcp({ error: raw.error }) };
   }
-  if (raw.rawOutput !== undefined) {
-    return raw.rawOutput;
-  }
-  if (raw.partialResult !== undefined) {
-    return raw.partialResult;
-  }
-  if (raw.result !== undefined) {
-    return raw.result;
-  }
-  if (raw.output !== undefined) {
-    return raw.output;
-  }
-  if (raw.content !== undefined) {
-    return raw.content;
-  }
+  const source = firstDefinedOutputSource(raw);
+  if (source === undefined) return { rawOutput: undefined };
+
+  const sanitized = sanitizeRawOutputCandidate(raw[source]);
+  return typeof sanitized === "string" ? { rawOutput: sanitized, text: sanitized, source } : { rawOutput: sanitized, source };
+}
+
+function firstDefinedOutputSource(raw: Record<string, unknown>): "rawOutput" | "output" | "partialResult" | "result" | "content" | undefined {
+  if (raw.rawOutput !== undefined) return "rawOutput";
+  if (raw.output !== undefined) return "output";
+  if (raw.partialResult !== undefined) return "partialResult";
+  if (raw.result !== undefined) return "result";
+  if (raw.content !== undefined) return "content";
   return undefined;
 }
 
-function extractContent(raw: Record<string, unknown>): NonNullable<Extract<SessionUpdate, { sessionUpdate: "tool_call_update" }>["content"]> {
-  const content: NonNullable<Extract<SessionUpdate, { sessionUpdate: "tool_call_update" }>["content"]> = [];
-  const text = firstString(raw.content, raw.output, raw.rawOutput);
-  if (text !== undefined) {
-    content.push(textToolContent(text));
+function sanitizeRawOutputCandidate(value: unknown): unknown {
+  const sanitized = sanitizeToolOutputForAcp(value);
+  if (!isRecord(sanitized) || sanitized.content === undefined) {
+    return sanitized;
   }
-  content.push(...extractToolResultContent(raw.partialResult));
-  content.push(...extractToolResultContent(raw.result));
+
+  const content = contentItemsToToolCallContent(sanitized.content, { unknownText: "drop" }).map((item) => item.content);
+  if (content.length === 0) {
+    const { content: _content, ...rest } = sanitized;
+    return Object.keys(rest).length > 0 ? rest : undefined;
+  }
+  return { ...sanitized, content };
+}
+
+function extractContent(raw: Record<string, unknown>, output: { rawOutput: unknown; text?: string; source?: string }): NonNullable<Extract<SessionUpdate, { sessionUpdate: "tool_call_update" }>["content"]> {
+  const content: NonNullable<Extract<SessionUpdate, { sessionUpdate: "tool_call_update" }>["content"]> = [];
+  if (output.text !== undefined) {
+    content.push(textToolContent(output.text));
+  }
+  const directContent = output.source === "content" ? [] : extractToolResultContent(output.rawOutput);
+  if (directContent.length > 0) {
+    content.push(...directContent);
+  } else if (output.text !== undefined && output.source !== "content") {
+    content.push(...extractToolResultContent(sanitizeRawOutputCandidate(raw.content)));
+  } else if (output.text === undefined) {
+    const text = safeTextOutput(raw.content) ?? safeTextOutput(raw.output) ?? safeTextOutput(raw.rawOutput);
+    if (text !== undefined) {
+      content.push(textToolContent(text));
+    }
+  }
+  if (!(output.source === "partialResult")) {
+    content.push(...extractToolResultContent(sanitizeRawOutputCandidate(raw.partialResult)));
+  }
+  if (!(output.source === "result")) {
+    content.push(...extractToolResultContent(sanitizeRawOutputCandidate(raw.result)));
+  }
   return content;
 }
 
+function safeTextOutput(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  return sanitizeTextForAcp(value);
+}
+
+
 function extractRawInput(raw: Record<string, unknown>): unknown {
-  return raw.rawInput ?? raw.input ?? raw.args;
+  return sanitizeToolInput(parseToolInput(raw.rawInput ?? raw.input ?? raw.args));
 }
 
 function buildToolTitle(name: string, rawInput: unknown): string {
@@ -255,17 +292,13 @@ function buildToolStartContent(name: string, rawInput: unknown): NonNullable<Ext
 }
 
 function extractToolResultContent(value: unknown): NonNullable<Extract<SessionUpdate, { sessionUpdate: "tool_call_update" }>["content"]> {
-  if (!isRecord(value) || !Array.isArray(value.content)) {
+  if (Array.isArray(value)) {
+    return contentItemsToToolCallContent(value, { unknownText: "drop" });
+  }
+  if (!isRecord(value)) {
     return [];
   }
-
-  const content: NonNullable<Extract<SessionUpdate, { sessionUpdate: "tool_call_update" }>["content"]> = [];
-  for (const item of value.content) {
-    if (isRecord(item) && item.type === "text" && typeof item.text === "string") {
-      content.push(textToolContent(item.text));
-    }
-  }
-  return content;
+  return contentItemsToToolCallContent(value.content, { unknownText: "drop" });
 }
 
 function textToolContent(text: string): NonNullable<Extract<SessionUpdate, { sessionUpdate: "tool_call_update" }>["content"]>[number] {

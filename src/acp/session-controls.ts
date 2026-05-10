@@ -1,7 +1,20 @@
 import { RequestError, type NewSessionResponse, type SessionConfigOption, type SessionModeState, type SessionModelState, type SetSessionConfigOptionRequest } from "@agentclientprotocol/sdk";
 import type { RuntimeAdapter } from "../runtime/RuntimeAdapter.ts";
 
-export type SessionSetupState = Pick<NewSessionResponse, "models" | "modes" | "configOptions">;
+export type SessionSetupStatePublic = Pick<NewSessionResponse, "models" | "modes" | "configOptions">;
+export type SessionSetupState = SessionSetupStatePublic & { runtimeSessionId?: string };
+
+export function requireSessionSetupState(setupState: SessionSetupState | undefined): SessionSetupState {
+  if (setupState === undefined) {
+    throw new Error("Session setup state was not built before publish");
+  }
+  return setupState;
+}
+
+export function toPublicSessionSetupState(setupState: SessionSetupState): SessionSetupStatePublic {
+  const { runtimeSessionId: _runtimeSessionId, ...publicState } = setupState;
+  return publicState;
+}
 
 type OmpModelSummary = {
   provider: string;
@@ -13,8 +26,8 @@ type OmpModelSummary = {
 type OmpControlState = {
   model: OmpModelSummary;
   thinkingLevel?: string | null;
+  sessionId?: string;
 };
-
 type SelectOption = { value: string; name: string; description?: string };
 
 type Snapshot = {
@@ -132,7 +145,7 @@ function buildSetupState(state: OmpControlState, availableModels: OmpModelSummar
     },
   ];
 
-  return { models, modes: buildDefaultModeState(), configOptions };
+  return { models, modes: buildDefaultModeState(), configOptions, ...(state.sessionId !== undefined ? { runtimeSessionId: state.sessionId } : {}) };
 }
 
 
@@ -196,6 +209,9 @@ function parseControlState(raw: unknown): OmpControlState {
   const record = requireRecord(raw, "get_state response");
   const model = parseModel(requireRecord(record.model, "get_state.model"), "get_state.model");
   const state: OmpControlState = { model };
+  const sessionId = record.sessionId;
+  if (typeof sessionId === "string" && sessionId.length > 0) state.sessionId = sessionId;
+  else if (sessionId !== undefined) throw new Error("Invalid get_state.sessionId: expected non-empty string/undefined");
   const thinkingLevel = record.thinkingLevel;
   if (typeof thinkingLevel === "string") state.thinkingLevel = thinkingLevel;
   else if (thinkingLevel === null) state.thinkingLevel = null;

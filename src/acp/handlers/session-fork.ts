@@ -1,6 +1,6 @@
 import { rm } from "node:fs/promises";
 import { RequestError, type ForkSessionRequest, type ForkSessionResponse } from "@agentclientprotocol/sdk";
-import { buildSessionSetupState, type SessionSetupState } from "../session-controls.ts";
+import { buildSessionSetupState, requireSessionSetupState, toPublicSessionSetupState, type SessionSetupState } from "../session-controls.ts";
 import {
   findOmpSessionById,
   forkOmpSessionFile,
@@ -74,9 +74,15 @@ export async function handleSessionFork(
         throw error;
       }
 
-      await manager.createSessionWithId(forkId, params, async (runtime) => {
-        await runtime.request("switch_session", { sessionPath: fork!.path });
-        setupState = await buildSessionSetupState(runtime);
+      await manager.createSessionWithId(forkId, params, {
+        beforeGuard: async (runtime) => {
+          await runtime.request("switch_session", { sessionPath: fork!.path });
+          return { sessionId: fork!.sessionId };
+        },
+        afterGuard: async (runtime) => {
+          setupState = await buildSessionSetupState(runtime);
+          return undefined;
+        }
       });
     } catch (error) {
       if (fork !== undefined) {
@@ -89,15 +95,8 @@ export async function handleSessionFork(
       throw RequestError.internalError({ details: "Fork session file was not created" });
     }
 
-    return { sessionId: fork.sessionId, ...requireSetupState(setupState) };
+    return { sessionId: fork.sessionId, ...toPublicSessionSetupState(requireSessionSetupState(setupState)) };
   } finally {
     sourceGuard.finish();
   }
-}
-
-function requireSetupState(setupState: SessionSetupState | undefined): SessionSetupState {
-  if (setupState === undefined) {
-    throw new Error("Session setup state was not built before publish");
-  }
-  return setupState;
 }

@@ -63,6 +63,57 @@ test("registered host tool emits progress raw update, ACP completion, and raw su
   ]);
 });
 
+test("host tool sanitizes ACP rawInput while executor and OMP result keep original input", async () => {
+  const { bridge, frames, updates } = createBridge({
+    lookup: async ({ arguments: input }) => {
+      return { ok: true, input };
+    },
+  });
+
+  await bridge.handle({
+    type: "host_tool_call",
+    id: "host_secret",
+    toolCallId: "tc_secret",
+    toolName: "lookup",
+    arguments: { query: "abc", token: "secret", config: { baseURL: "https://secret.example" } },
+  });
+
+  assert.deepEqual(updates[0], {
+    sessionUpdate: "tool_call",
+    toolCallId: "tc_secret",
+    title: "lookup",
+    kind: "other",
+    status: "pending",
+    rawInput: { query: "abc" },
+  });
+  assert.deepEqual(frames.at(-1), {
+    type: "host_tool_result",
+    id: "host_secret",
+    result: { ok: true, input: { query: "abc", token: "secret", config: { baseURL: "https://secret.example" } } },
+  });
+});
+
+test("host tool sanitizes ACP rawOutput while OMP result keeps original executor result", async () => {
+  const executorResult = { ok: true, token: "secret", data: { value: 1 } };
+  const { bridge, frames, updates } = createBridge({
+    lookup: async () => executorResult,
+  });
+
+  await bridge.handle({ type: "host_tool_call", id: "host_output", toolCallId: "tc_output", toolName: "lookup" });
+
+  assert.deepEqual(updates.at(-1), {
+    sessionUpdate: "tool_call_update",
+    toolCallId: "tc_output",
+    status: "completed",
+    rawOutput: { ok: true, data: { value: 1 } },
+  });
+  assert.deepEqual(frames.at(-1), {
+    type: "host_tool_result",
+    id: "host_output",
+    result: executorResult,
+  });
+});
+
 test("registered host tool failure emits failed ACP update and raw error result", async () => {
   const { bridge, frames, updates } = createBridge({
     explode: async () => {
@@ -123,6 +174,38 @@ test("cancel active host tool aborts executor and emits failed cancelled update 
   ]);
 });
 
+test("cancel by toolCallId aborts active host tool and replies with original host call id", async () => {
+  let observedAbort = false;
+  let release!: () => void;
+  const started = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const { bridge, frames, updates } = createBridge({
+    long: async ({ signal }) => {
+      signal.addEventListener("abort", () => {
+        observedAbort = true;
+        release();
+      });
+      await started;
+      return { shouldNotWin: true };
+    },
+  });
+
+  const call = bridge.handle({ type: "host_tool_call", id: "host_1", toolCallId: "tc_1", toolName: "long" });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  await bridge.handle({ type: "host_tool_cancel", id: "cancel_1", toolCallId: "tc_1" });
+  await call;
+
+  assert.equal(observedAbort, true);
+  assert.deepEqual(updates.at(-1), { sessionUpdate: "tool_call_update", toolCallId: "tc_1", status: "failed", rawOutput: { cancelled: true } });
+  assert.deepEqual(frames.at(-1), {
+    type: "host_tool_result",
+    id: "host_1",
+    isError: true,
+    result: { content: [{ type: "text", text: "Host tool call cancelled" }] },
+  });
+});
+
 test("cancel missing target emits explicit failed update and raw cancel error result", async () => {
   const { bridge, frames, updates } = createBridge();
 
@@ -139,4 +222,15 @@ test("cancel missing target emits explicit failed update and raw cancel error re
       result: { content: [{ type: "text", text: "No active host tool call: host_missing" }] },
     },
   ]);
+});
+
+test("cancel with only unmapped toolCallId emits ACP failure without raw host result", async () => {
+  const { bridge, frames, updates } = createBridge();
+
+  await bridge.handle({ type: "host_tool_cancel", id: "cancel_3", toolCallId: "tc_missing" });
+
+  assert.deepEqual(updates, [
+    { sessionUpdate: "tool_call_update", toolCallId: "tc_missing", status: "failed", rawOutput: { error: "No active host tool call: tc_missing" } },
+  ]);
+  assert.deepEqual(frames, []);
 });

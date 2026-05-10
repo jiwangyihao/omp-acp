@@ -1,12 +1,15 @@
-import type { PromptRequest, PromptResponse, SessionUpdate } from "@agentclientprotocol/sdk";
+import type { PromptRequest, PromptResponse, RequestPermissionRequest, RequestPermissionResponse, SessionUpdate } from "@agentclientprotocol/sdk";
 import type { RuntimeEvent } from "../../runtime/RuntimeEvents.ts";
 import type { SessionManager } from "../../session/manager.ts";
 import { HostToolBridge, type HostToolExecutor } from "../../runtime/omp/host-tools.ts";
+import { ExtensionUiBridge } from "../extension-ui.ts";
 import { translateRuntimeEventToSessionUpdate } from "../../translate/events.ts";
+import { agentEndMessagesToFallbackUpdates, streamedAssistantMessageKey } from "../../translate/messages.ts";
 import { translatePromptToOmpRequest } from "../../translate/prompt.ts";
 
 export type SessionPromptConnection = {
   sessionUpdate(params: { sessionId: string; update: SessionUpdate }): Promise<void>;
+  requestPermission(params: RequestPermissionRequest): Promise<RequestPermissionResponse>;
 };
 
 export type SessionPromptHandlerContext = {
@@ -25,6 +28,13 @@ export async function handleSessionPrompt(
 ): Promise<PromptResponse> {
   const { session, cancellation, finish } = manager.beginPrompt(params.sessionId);
   const updatePromises: Promise<void>[] = [];
+  const streamedAssistantMessages = new Set<string>();
+  const streamedIndex = {
+    has: (key: string) => streamedAssistantMessages.has(key),
+    add: (key: string) => {
+      streamedAssistantMessages.add(key);
+    },
+  };
   let acceptingEvents = true;
   let failPrompt: (reason: unknown) => void = () => {};
   const eventFailure = new Promise<never>((_, reject) => {
@@ -63,9 +73,20 @@ export async function handleSessionPrompt(
     },
     failPrompt: rejectActivePrompt,
   });
+  const extensionUiBridge = new ExtensionUiBridge({
+    sessionId: params.sessionId,
+    runtime: session.runtime,
+    connection,
+    emitUpdate,
+  });
 
   const unsubscribe = session.runtime.onEvent((event: RuntimeEvent) => {
     if (event.eventType === "agent_end") {
+      if (!cancellation.isCancelled && acceptingEvents) {
+        for (const update of agentEndMessagesToFallbackUpdates(event.raw, streamedIndex)) {
+          emitUpdate(update);
+        }
+      }
       completeTurn();
       return;
     }
@@ -81,6 +102,19 @@ export async function handleSessionPrompt(
       return;
     }
 
+    if (event.eventType === "extension_ui_request") {
+      try {
+        const handled = extensionUiBridge.handle(event.raw);
+        if (handled !== undefined) {
+          updatePromises.push(handled);
+          handled.catch(rejectActivePrompt);
+        }
+      } catch (error) {
+        rejectActivePrompt(error);
+      }
+      return;
+    }
+
     let update: SessionUpdate | undefined;
     try {
       update = translateRuntimeEventToSessionUpdate(event);
@@ -91,6 +125,12 @@ export async function handleSessionPrompt(
 
     if (update !== undefined) {
       emitUpdate(update);
+      if (update.sessionUpdate === "agent_message_chunk" || update.sessionUpdate === "agent_thought_chunk") {
+        const key = streamedAssistantMessageKey(event.raw);
+        if (key !== undefined) {
+          streamedIndex.add(key);
+        }
+      }
     }
   });
 

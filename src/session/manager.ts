@@ -17,7 +17,56 @@ export type RuntimeFactoryInput = {
 };
 
 export type RuntimeFactory = (input: RuntimeFactoryInput) => RuntimeAdapter;
-type BeforePublishRuntime = (runtime: RuntimeAdapter) => Promise<void>;
+type SessionPublishOverride = { sessionId?: string } | undefined;
+export type CreateSessionHooks = {
+  beforeGuard?: (runtime: RuntimeAdapter) => Promise<SessionPublishOverride>;
+  afterGuard?: (runtime: RuntimeAdapter) => Promise<SessionPublishOverride>;
+};
+type BeforePublishRuntime = (runtime: RuntimeAdapter) => Promise<{ sessionId?: string } | void>;
+type CreateSessionPublishHooks = BeforePublishRuntime | CreateSessionHooks;
+
+const OMP_ASK_TOOL_NAME = "ask";
+
+async function disableOmpAskTool(runtime: RuntimeAdapter): Promise<void> {
+  const state = await runtime.request("get_state");
+  const toolNames = extractDumpToolNames(state);
+  if (!toolNames.includes(OMP_ASK_TOOL_NAME)) {
+    return;
+  }
+
+  await runtime.request("set_active_tools", {
+    toolNames: toolNames.filter((name) => name !== OMP_ASK_TOOL_NAME),
+  });
+}
+
+function extractDumpToolNames(state: unknown): string[] {
+  if (typeof state !== "object" || state === null || !Object.hasOwn(state, "dumpTools")) {
+    return [];
+  }
+  const dumpTools = (state as { dumpTools?: unknown }).dumpTools;
+  if (!Array.isArray(dumpTools)) {
+    return [];
+  }
+  return dumpTools
+    .map((tool): string | undefined => {
+      if (typeof tool !== "object" || tool === null || Array.isArray(tool)) {
+        return undefined;
+      }
+      const name = (tool as { name?: unknown }).name;
+      return typeof name === "string" && name.length > 0 ? name : undefined;
+    })
+    .filter((name): name is string => name !== undefined);
+}
+
+function normalizeCreateSessionHooks(hooks?: CreateSessionPublishHooks): CreateSessionHooks {
+  if (hooks === undefined) {
+    return {};
+  }
+  if (typeof hooks === "function") {
+    return { beforeGuard: async (runtime) => hooks(runtime).then((result) => result ?? undefined) };
+  }
+  return hooks;
+}
 
 export type ActivePrompt = {
   cancellation: PromptCancellation;
@@ -83,7 +132,7 @@ export class SessionManager {
   async createSessionWithId(
     sessionId: string,
     params: NewSessionRequest | LoadSessionRequest | ResumeSessionRequest | ForkSessionRequest,
-    beforePublish?: BeforePublishRuntime,
+    hooks?: CreateSessionPublishHooks,
   ): Promise<SessionRecord> {
     if (this.#sessions.has(sessionId) || this.#pendingSessionIds.has(sessionId)) {
       throw new SessionManagerError(`Session already exists: ${sessionId}`);
@@ -98,16 +147,21 @@ export class SessionManager {
     };
     const cleanupGeneration = this.#cleanupGeneration;
     let runtime: RuntimeAdapter | undefined;
+    let publishedSessionId = sessionId;
+    let finalReservation: { sessionId: string; token: symbol } | undefined;
+    let published = false;
 
     try {
       runtime = this.#runtimeFactory(input);
       this.#pendingRuntimes.add(runtime);
+      const createHooks = normalizeCreateSessionHooks(hooks);
 
       try {
         await runtime.ready;
-        if (beforePublish !== undefined) {
-          await beforePublish(runtime);
-        }
+        const beforeOverride = await createHooks.beforeGuard?.(runtime);
+        await disableOmpAskTool(runtime);
+        const afterOverride = await createHooks.afterGuard?.(runtime);
+        publishedSessionId = afterOverride?.sessionId ?? beforeOverride?.sessionId ?? sessionId;
       } catch (cause) {
         if (this.#pendingRuntimes.delete(runtime)) {
           await runtime.close();
@@ -115,6 +169,7 @@ export class SessionManager {
         throw new SessionManagerError(`Runtime failed to become ready for session ${sessionId}`, { cause });
       }
 
+      finalReservation = this.#reserveFinalSessionId(publishedSessionId, sessionId, pendingSessionReservation);
       this.#pendingRuntimes.delete(runtime);
       if (cleanupGeneration !== this.#cleanupGeneration) {
         await runtime.close();
@@ -122,19 +177,47 @@ export class SessionManager {
       }
 
       const session: SessionRecord = {
-        sessionId,
+        sessionId: publishedSessionId,
         cwd: params.cwd,
         mcpServers: params.mcpServers ?? [],
         runtime,
         activePrompt: undefined,
       };
-      this.#sessions.set(sessionId, session);
+      this.#sessions.set(publishedSessionId, session);
+      published = true;
       return session;
+    } catch (error) {
+      if (runtime !== undefined && !published && this.#pendingRuntimes.delete(runtime)) {
+        await runtime.close();
+      }
+      throw error;
     } finally {
       if (this.#pendingSessionIds.get(sessionId) === pendingSessionReservation) {
         this.#pendingSessionIds.delete(sessionId);
       }
+      if (finalReservation !== undefined && this.#pendingSessionIds.get(finalReservation.sessionId) === finalReservation.token) {
+        this.#pendingSessionIds.delete(finalReservation.sessionId);
+      }
     }
+  }
+
+  #reserveFinalSessionId(finalSessionId: string, initialSessionId: string, initialReservation: symbol) {
+    if (this.#sessions.has(finalSessionId)) {
+      throw new SessionManagerError(`Session already exists: ${finalSessionId}`);
+    }
+
+    const existingPending = this.#pendingSessionIds.get(finalSessionId);
+    if (existingPending !== undefined && !(finalSessionId === initialSessionId && existingPending === initialReservation)) {
+      throw new SessionManagerError(`Session already exists: ${finalSessionId}`);
+    }
+
+    if (finalSessionId === initialSessionId) {
+      return undefined;
+    }
+
+    const token = Symbol(finalSessionId);
+    this.#pendingSessionIds.set(finalSessionId, token);
+    return { sessionId: finalSessionId, token };
   }
 
   requireSession(sessionId: string): SessionRecord {

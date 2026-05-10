@@ -10,12 +10,12 @@
 | `npm run build` | 通过 | `tsup src/index.ts --format esm --platform node --target node20 --clean` 生成 `dist/index.js` |
 | stdio smoke | 通过 | `npm run smoke:acp` 使用 build output 和 fixture runtime 完成 initialize/new/prompt、`session/fork`、session controls 与 setter 后 prompt |
 | official SDK client smoke | 通过 | `npm run smoke:sdk-client` 使用 `@agentclientprotocol/sdk` 的 `ClientSideConnection` 驱动 build output，覆盖 initialize/new/prompt/list/resume/fork、setup state、session controls 与 setter 后 prompt |
-| real OMP RPC controls smoke | 通过 | 2026-05-08 发布前 fresh `npm run validate:standard` 内执行；真实 `get_state`、`get_available_models` 与 OMP controls setters 后 state 生效 |
+| real OMP RPC controls smoke | 历史 v0.1.0 快照；当前状态需重新验证 | 2026-05-08 发布前 fresh `npm run validate:standard` 内执行并记录为通过；该记录属于历史快照，不能代表当前发布门禁状态。当前发布必须重新运行 `npm run smoke:omp-rpc-controls:required`，skip、timeout 或 failure 均不得视为通过 |
 | Registry-style probe | 通过 | 2026-05-08 发布前 fresh `npm run validate:standard` 内执行；覆盖 capability discovery、session controls probes 与 unsupported-method 边界 |
 | `openclaw/acpx` draft assessment | 通过（有 expected draft failures） | 2026-05-08 发布前 fresh `npm run validate:standard` 内执行；固定 `d46e156...`，21 cases，11 passed，10 expected draft failures，0 unexpected；这不是 full pass |
 | Zed 手工 smoke | 未执行 | GUI 手工 smoke 未自动化；发布说明不得声称已完成 Zed GUI 手工验证 |
 
-本次发布按用户明确指令进入 GitHub 与 npm 发布任务。自动门禁必须重新跑 fresh 结果；其中 `openclaw/acpx` 仅表示 0 unexpected failure，不表示官方完整 conformance 或 full pass。Zed GUI 手工 smoke 未执行时，只能如实记录未验证，不能在发布说明中声称通过。
+本次发布按用户明确指令进入 GitHub 与 npm 发布任务。自动门禁必须重新跑 fresh 结果；其中 `openclaw/acpx` 仅表示 0 unexpected failure，不表示官方完整 conformance 或 full pass。Zed GUI 手工 smoke 未执行时，只能如实记录未验证，不能在发布说明中声称通过。上表中的 real OMP RPC controls smoke 仅是 v0.1.0 历史快照；当前发布状态以重新运行 required gate 的结果为准。
 
 ## 发布边界
 
@@ -30,16 +30,17 @@
 - [ ] 运行 `npm run build`，确认 build output 可用。
 - [ ] 运行 `npm run smoke:acp`，确认 build output 的 ACP stdio smoke 通过。
 - [ ] 运行 `npm run smoke:sdk-client`，确认官方 TypeScript SDK client smoke 通过。
-- [ ] 运行 `npm run smoke:omp-rpc-controls`，确认发布机器为非 skip success；若 skip，必须记录 `omp` 缺失原因且不得视为发布通过。
+- [ ] 运行 `npm run smoke:omp-rpc-controls:required`，确认发布机器真实 OMP RPC controls smoke 通过；skip、timeout 或 failure 均为发布门禁失败。
+- [ ] 如需开发机诊断，可运行 `npm run smoke:omp-rpc-controls:optional`；optional smoke 可 skip，不是发布通过条件。
 - [ ] 运行 `npm run validate:registry`，确认 Registry-style capability discovery、session controls probes 与 unsupported-method 边界通过。
 - [ ] 运行 `npm run validate:acpx`，确认 acpx draft assessment 无 unexpected failure，并复核 expected draft failures 是否仍与能力矩阵一致。
-- [ ] 如需一次性执行除 Zed 外的自动化门禁，运行 `npm run validate:standard`。
-- [ ] 运行真实 `omp --mode rpc` controls smoke；如果本机不可用，记录版本、PATH 和失败原因。
+- [ ] 如需一次性执行除 Zed 外的自动化门禁，运行 `npm run validate:standard`；该命令必须使用 required real OMP gate。
+- [ ] 记录真实 `omp --mode rpc` controls smoke 的版本、PATH 和结果；如果本机 required gate 失败，不得声称发布验证通过。
 - [ ] 对照 `docs/compatibility/capability-matrix.md` 检查 `initialize` 输出。
 
 ## GitHub Actions 发布流
 
-`.github/workflows/release.yml` 用于 npm Trusted Publisher 后续发布。GitHub 托管 runner 默认没有真实 `omp`，因此 workflow 跑 `check`、stdio smoke、SDK client smoke、registry-style probe 和 `openclaw/acpx` draft assessment；真实 OMP RPC controls smoke 仍作为本地发布前门禁执行并记录。
+`.github/workflows/release.yml` 用于 npm Trusted Publisher 后续发布。GitHub 托管 runner 默认没有真实 `omp`，因此 workflow 跑 `check`、stdio smoke、SDK client smoke、registry-style probe 和 `openclaw/acpx` draft assessment；真实 OMP RPC controls smoke 仍必须通过本地 `npm run smoke:omp-rpc-controls:required` 发布前门禁并记录。optional smoke 只用于诊断。
 
 ## Zed 手工门禁
 

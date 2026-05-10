@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { RuntimeEvent } from "../../../src/runtime/RuntimeEvents.ts";
 import { RuntimeEventTranslationError, UnsupportedRuntimeEventError, translateRuntimeEventToSessionUpdate } from "../../../src/translate/events.ts";
+import { classifyExtensionUiRequest } from "../../../src/translate/extension-ui.ts";
+import { agentEndMessagesToFallbackUpdates, streamedAssistantMessageKey } from "../../../src/translate/messages.ts";
 
 function event(eventType: string, raw: Record<string, unknown> = {}): RuntimeEvent {
   return { type: "event", eventType, raw };
@@ -52,6 +54,90 @@ test("translateRuntimeEventToSessionUpdate maps thought and reasoning updates to
   );
 });
 
+test("translateRuntimeEventToSessionUpdate maps OMP assistant text_delta to an agent message chunk", () => {
+  assert.deepEqual(
+    translateRuntimeEventToSessionUpdate(
+      event("message_update", {
+        message: { role: "assistant", content: [{ type: "text", text: "final" }], responseId: "r1", timestamp: 1 },
+        assistantMessageEvent: { type: "text_delta", delta: "hi", contentIndex: 0 },
+      }),
+    ),
+    { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "hi" } },
+  );
+});
+
+test("translateRuntimeEventToSessionUpdate redacts sensitive JSON text deltas", () => {
+  assert.deepEqual(
+    translateRuntimeEventToSessionUpdate(
+      event("message_update", {
+        message: { role: "assistant", content: [{ type: "text", text: "final" }], responseId: "r1", timestamp: 1 },
+        assistantMessageEvent: { type: "text_delta", delta: '{"token":"secret-token","ok":true}', contentIndex: 0 },
+      }),
+    ),
+    { sessionUpdate: "agent_message_chunk", content: { type: "text", text: '{"ok":true}' } },
+  );
+});
+
+test("agent_end fallback reuses streamed assistant key when user precedes assistant", () => {
+  const streamed = streamedAssistantMessageKey({
+    message: { role: "assistant", content: ["streamed", "not streamed"] },
+    assistantMessageEvent: { type: "text_delta", delta: "streamed", contentIndex: 0 },
+  });
+  assert.equal(streamed, "message:0:no-ts:0:agent_message_chunk");
+
+  const emitted = new Set<string>([streamed]);
+  const updates = agentEndMessagesToFallbackUpdates(
+    {
+      messages: [
+        { role: "user", content: "prompt" },
+        { role: "assistant", content: ["streamed", "not streamed"] },
+      ],
+    },
+    emitted,
+  );
+
+  assert.deepEqual(updates, [
+    { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "not streamed" } },
+  ]);
+});
+
+test("agent_end fallback redacts sensitive JSON string content", () => {
+  const updates = agentEndMessagesToFallbackUpdates(
+    { messages: [{ role: "assistant", content: ['{"token":"secret-token","ok":true}'] }] },
+    new Set<string>(),
+  );
+
+  assert.deepEqual(updates, [
+    { sessionUpdate: "agent_message_chunk", content: { type: "text", text: '{"ok":true}' } },
+  ]);
+});
+
+test("translateRuntimeEventToSessionUpdate maps OMP assistant thinking_delta to a thought chunk", () => {
+  assert.deepEqual(
+    translateRuntimeEventToSessionUpdate(
+      event("message_update", {
+        message: { role: "assistant", content: [{ type: "thinking", thinking: "final" }], responseId: "r1", timestamp: 1 },
+        assistantMessageEvent: { type: "thinking_delta", delta: "reason", contentIndex: 0 },
+      }),
+    ),
+    { sessionUpdate: "agent_thought_chunk", content: { type: "text", text: "reason" } },
+  );
+});
+
+test("translateRuntimeEventToSessionUpdate ignores assistant toolcall message events", () => {
+  for (const type of ["toolcall_start", "toolcall_delta", "toolcall_end"]) {
+    assert.equal(
+      translateRuntimeEventToSessionUpdate(
+        event("message_update", {
+          message: { role: "assistant", content: [{ type: "toolCall", id: "tc_1", name: "bash" }] },
+          assistantMessageEvent: { type, contentIndex: 0 },
+        }),
+      ),
+      undefined,
+    );
+  }
+});
+
 test("translateRuntimeEventToSessionUpdate returns undefined for empty or non-string text", () => {
   assert.equal(translateRuntimeEventToSessionUpdate(event("message_update", { content: "" })), undefined);
   assert.equal(translateRuntimeEventToSessionUpdate(event("message_update", { content: 123 })), undefined);
@@ -88,6 +174,21 @@ test("translateRuntimeEventToSessionUpdate ignores fire-and-forget extension UI 
   assert.equal(
     translateRuntimeEventToSessionUpdate(event("extension_ui_request", { method: "setStatus", id: "ui-2", statusKey: "x" })),
     undefined,
+  );
+});
+
+test("shared extension UI classifier keeps translator widget and unsupported interactive boundaries", () => {
+  assert.equal(classifyExtensionUiRequest({ method: "setWidget", id: "ui-widget" }), "widget");
+  assert.equal(
+    translateRuntimeEventToSessionUpdate(
+      event("extension_ui_request", { method: "setWidget", id: "ui-widget", widgetLines: ["visible only through bridge"] }),
+    ),
+    undefined,
+  );
+  assert.equal(classifyExtensionUiRequest({ method: "select", id: "ui-select" }), "unsupported_interactive");
+  assert.throws(
+    () => translateRuntimeEventToSessionUpdate(event("extension_ui_request", { method: "select", id: "ui-select" })),
+    UnsupportedRuntimeEventError,
   );
 });
 

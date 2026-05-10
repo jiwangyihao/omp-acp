@@ -1,4 +1,5 @@
 import type { SessionUpdate } from "@agentclientprotocol/sdk";
+import { sanitizeToolInput, sanitizeToolOutputForAcp } from "../../translate/safety.ts";
 
 export type HostToolExecutorContext = {
   id: string;
@@ -19,6 +20,7 @@ export type HostToolBridgeOptions = {
 };
 
 type ActiveCall = {
+  id: string;
   toolCallId: string;
   controller: AbortController;
   cancelled: boolean;
@@ -29,7 +31,8 @@ export class HostToolBridge {
   private readonly sendFrame: (frame: Record<string, unknown>) => Promise<void>;
   private readonly emitUpdate: (update: SessionUpdate) => Promise<void>;
   private readonly failPrompt: (error: unknown) => void;
-  private readonly activeCalls = new Map<string, ActiveCall>();
+  private readonly activeCallsById = new Map<string, ActiveCall>();
+  private readonly activeCallIdByToolCallId = new Map<string, string>();
 
   constructor(options: HostToolBridgeOptions) {
     this.registry = options.registry;
@@ -75,7 +78,7 @@ export class HostToolBridge {
       title: toolName,
       kind: "other",
       status: "pending",
-      rawInput: input,
+      rawInput: sanitizeToolInput(input),
     });
 
     const executor = this.registry[toolName];
@@ -86,8 +89,9 @@ export class HostToolBridge {
       return;
     }
 
-    const active: ActiveCall = { toolCallId, controller: new AbortController(), cancelled: false };
-    this.activeCalls.set(id, active);
+    const active: ActiveCall = { id, toolCallId, controller: new AbortController(), cancelled: false };
+    this.activeCallsById.set(id, active);
+    this.activeCallIdByToolCallId.set(toolCallId, id);
 
     try {
       const result = await executor({
@@ -108,7 +112,7 @@ export class HostToolBridge {
           sessionUpdate: "tool_call_update",
           toolCallId,
           status: "completed",
-          rawOutput: result,
+          rawOutput: sanitizeToolOutputForAcp(result),
         });
         await this.transmit({ type: "host_tool_result", id, result });
       }
@@ -119,13 +123,16 @@ export class HostToolBridge {
         await this.sendErrorResult(id, message);
       }
     } finally {
-      this.activeCalls.delete(id);
+      this.activeCallsById.delete(id);
+      this.activeCallIdByToolCallId.delete(toolCallId);
     }
   }
 
   private async handleCancel(raw: Record<string, unknown>): Promise<void> {
-    const targetId = stringValue(raw.targetId) ?? stringValue(raw.toolCallId);
-    if (targetId === undefined) {
+    const targetId = stringValue(raw.targetId);
+    const cancelToolCallId = stringValue(raw.toolCallId);
+    const requestedId = targetId ?? cancelToolCallId;
+    if (requestedId === undefined) {
       await this.emitUpdate({
         sessionUpdate: "tool_call_update",
         toolCallId: "unknown_host_tool_call",
@@ -135,18 +142,26 @@ export class HostToolBridge {
       return;
     }
 
-    const active = this.activeCalls.get(targetId);
+    let active = targetId === undefined ? undefined : this.activeCallsById.get(targetId);
+    if (active === undefined && cancelToolCallId !== undefined) {
+      const id = this.activeCallIdByToolCallId.get(cancelToolCallId);
+      active = id === undefined ? undefined : this.activeCallsById.get(id);
+    }
+
     if (active === undefined) {
-      const message = `No active host tool call: ${targetId}`;
-      await this.emitFailed(targetId, { error: message });
-      await this.sendErrorResult(targetId, message);
+      const message = `No active host tool call: ${requestedId}`;
+      await this.emitFailed(requestedId, { error: message });
+      if (targetId !== undefined) {
+        await this.sendErrorResult(targetId, message);
+      }
       return;
     }
 
     active.cancelled = true;
     active.controller.abort();
+
     await this.emitFailed(active.toolCallId, { cancelled: true });
-    await this.sendErrorResult(targetId, "Host tool call cancelled");
+    await this.sendErrorResult(active.id, "Host tool call cancelled");
   }
 
   private async emitFailed(toolCallId: string, rawOutput: Record<string, unknown>): Promise<void> {
@@ -154,7 +169,7 @@ export class HostToolBridge {
       sessionUpdate: "tool_call_update",
       toolCallId,
       status: "failed",
-      rawOutput,
+      rawOutput: sanitizeToolOutputForAcp(rawOutput),
     });
   }
 

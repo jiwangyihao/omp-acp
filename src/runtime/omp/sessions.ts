@@ -2,6 +2,10 @@ import { mkdir, open, readdir, readFile, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { SessionUpdate } from "@agentclientprotocol/sdk";
+import { contentItemsToToolCallContent, sanitizeContentBlock } from "../../translate/content.ts";
+import { messageToSessionUpdates as sharedMessageToSessionUpdates } from "../../translate/messages.ts";
+import { isPrivateAcpVisibleKey, parseToolInput, sanitizeTextForAcp, sanitizeToolInput } from "../../translate/safety.ts";
+import { toolExecutionEndToUpdate, toolExecutionStartToUpdate } from "../../translate/tools.ts";
 
 export type OmpSessionInfo = {
   sessionId: string;
@@ -135,19 +139,16 @@ export async function loadOmpSessionHistory(path: string): Promise<SessionUpdate
       continue;
     }
     const entry = parseJsonLine(line, path, index + 1);
-    if (!isRecord(entry) || entry.type !== "message") {
+    if (!isRecord(entry)) {
+      continue;
+    }
+    if (entry.type !== "message") {
+      updates.push(...topLevelHistoryEntryToUpdates(entry));
       continue;
     }
 
     const message = isRecord(entry.message) ? entry.message : entry;
-    if (message.role !== "user" && message.role !== "assistant") {
-      throw new Error(`Unsupported OMP message role in ${path}:${index + 1}`);
-    }
-
-    updates.push({
-      sessionUpdate: message.role === "user" ? "user_message_chunk" : "agent_message_chunk",
-      content: { type: "text", text: extractMessageText(message.content, path, index + 1) },
-    } as SessionUpdate);
+    updates.push(...messageToSessionUpdates(message, path, index + 1));
   }
 
   return updates;
@@ -319,21 +320,242 @@ async function findJsonlFiles(root: string): Promise<string[]> {
   return files;
 }
 
-function extractMessageText(content: unknown, path: string, line: number): string {
+function topLevelHistoryEntryToUpdates(entry: Record<string, unknown>): SessionUpdate[] {
+  switch (entry.type) {
+    case "session":
+      return toUpdates(sessionHeaderToUpdate(entry));
+    case "model_change":
+      return [thoughtUpdate(`[model_change]\nmodel: ${sanitizeTextForAcp(typeof entry.model === "string" ? entry.model : "unknown")}`)];
+    case "thinking_level_change":
+      return [thoughtUpdate(`[thinking_level_change]\nthinking: ${sanitizeTextForAcp(typeof entry.thinkingLevel === "string" ? entry.thinkingLevel : "unknown")}`)];
+    case "branch_summary":
+      return typeof entry.summary === "string" && entry.summary.length > 0 ? [thoughtUpdate(`[branch_summary]\n${sanitizeTextForAcp(entry.summary)}`)] : [];
+    case "compaction":
+      return typeof entry.summary === "string" && entry.summary.length > 0 ? [thoughtUpdate(`[compaction]\n${sanitizeTextForAcp(entry.summary)}`)] : [];
+    case "service_tier_change":
+      return [thoughtUpdate(`[service_tier_change]\nservice tier: ${sanitizeTextForAcp(typeof entry.serviceTier === "string" ? entry.serviceTier : "default")}`)];
+    case "mode_change":
+      return [thoughtUpdate(`[mode_change]\nmode: ${sanitizeTextForAcp(typeof entry.mode === "string" ? entry.mode : "unknown")}`)];
+    case "custom_message":
+      return customMessageToUpdates(entry);
+    case "toolResult":
+    case "tool_result":
+      return toUpdates(replayToolResult(entry));
+    default:
+      return [];
+  }
+}
+
+function sessionHeaderToUpdate(entry: Record<string, unknown>): SessionUpdate | undefined {
+  const update: Record<string, unknown> = { sessionUpdate: "session_info_update" };
+  if (typeof entry.title === "string" && entry.title.length > 0) {
+    update.title = sanitizeTextForAcp(entry.title);
+  }
+  if (typeof entry.timestamp === "string" && entry.timestamp.length > 0) {
+    update.updatedAt = entry.timestamp;
+  }
+  return Object.keys(update).length > 1 ? update as SessionUpdate : undefined;
+}
+
+function customMessageToUpdates(entry: Record<string, unknown>): SessionUpdate[] {
+  if (entry.display !== true) {
+    return [];
+  }
+  const customType = sanitizeTextForAcp(typeof entry.customType === "string" && entry.customType.length > 0 ? entry.customType : "custom_message");
+  if (typeof entry.content === "string") {
+    return entry.content.length > 0 ? [thoughtUpdate(sanitizeTextForAcp(`[${customType}]\n${entry.content}`))] : [];
+  }
+
+  const updates: SessionUpdate[] = [];
+  for (const item of normalizeContentItems(entry.content, "custom_message", 0)) {
+    const updatesForItem = sharedMessageToSessionUpdates({ role: "assistant", content: [item] }, { unknownText: "summarize", includeToolCalls: false });
+    for (const update of updatesForItem) {
+      if (update.sessionUpdate === "agent_message_chunk" && update.content.type === "text") {
+        updates.push(thoughtUpdate(`[${customType}]\n${update.content.text}`));
+        continue;
+      }
+      updates.push({ ...update, sessionUpdate: "agent_thought_chunk" } as SessionUpdate);
+    }
+  }
+  return updates;
+}
+
+function toUpdates(update: SessionUpdate | undefined): SessionUpdate[] {
+  return update === undefined ? [] : [update];
+}
+
+function thoughtUpdate(text: string): SessionUpdate {
+  return { sessionUpdate: "agent_thought_chunk", content: { type: "text", text } } as SessionUpdate;
+}
+
+function messageToSessionUpdates(message: Record<string, unknown>, path: string, line: number): SessionUpdate[] {
+  if (message.role === "user" || message.role === "assistant") {
+    return replayAssistantOrUserMessage(message.role, message, path, line);
+  }
+  if (message.role === "toolResult") {
+    const update = replayToolResult(message);
+    return update === undefined ? [] : [update];
+  }
+  throw new Error(`Unsupported OMP message role in ${path}:${line}`);
+}
+
+function replayAssistantOrUserMessage(role: "user" | "assistant", message: Record<string, unknown>, path: string, line: number): SessionUpdate[] {
+  const chunks = normalizeContentItems(message.content, path, line);
+  const updates: SessionUpdate[] = [];
+
+  for (const chunk of chunks) {
+    if (role === "assistant" && isRecord(chunk) && chunk.type === "toolCall") {
+      const update = replayToolCall(chunk);
+      if (update !== undefined) updates.push(update);
+      continue;
+    }
+    updates.push(...historyContentItemToUpdates(role, chunk));
+  }
+
+  const errorUpdate = assistantErrorToUpdate(role, message);
+  if (errorUpdate !== undefined) {
+    updates.push(errorUpdate);
+  }
+  return updates;
+}
+
+function assistantErrorToUpdate(role: "user" | "assistant", message: Record<string, unknown>): SessionUpdate | undefined {
+  if (role !== "assistant" || message.stopReason !== "error") {
+    return undefined;
+  }
+  const errorMessage = firstNonEmptyString(message.errorMessage, message.error);
+  return errorMessage === undefined ? undefined : thoughtUpdate(sanitizeTextForAcp(`[assistant_error]\n${errorMessage}`));
+}
+
+function historyContentItemToUpdates(role: "user" | "assistant", item: unknown): SessionUpdate[] {
+  if (isRecord(item)) {
+    const block = sanitizeContentBlock(item);
+    if (block !== undefined) return [{ sessionUpdate: role === "assistant" ? "agent_message_chunk" : "user_message_chunk", content: block } as SessionUpdate];
+
+    const summary = summarizeHistoryUnknownContentBlock(item);
+    if (summary !== undefined) {
+      return [{ sessionUpdate: role === "assistant" ? "agent_thought_chunk" : "user_message_chunk", content: { type: "text", text: sanitizeTextForAcp(summary) } } as SessionUpdate];
+    }
+  }
+
+  return sharedMessageToSessionUpdates({ role, content: [item] }, { unknownText: "drop", includeToolCalls: false });
+}
+
+function summarizeHistoryUnknownContentBlock(block: Record<string, unknown>): string | undefined {
+  if (hasPrivateAcpVisibleKey(block) || isPrivateHistoryContentType(block.type)) return undefined;
+  const type = typeof block.type === "string" && block.type.length > 0 ? block.type : "unknown";
+  const title = firstNonEmptyString(block.title, block.name, block.label);
+  const text = firstNonEmptyString(block.text, block.summary, block.message, block.content);
+  if (text === undefined) return undefined;
+  return title === undefined ? `[${type}]\n${sanitizeTextForAcp(text)}` : `[${type}] ${title}\n${sanitizeTextForAcp(text)}`;
+}
+
+function hasPrivateAcpVisibleKey(value: Record<string, unknown>): boolean {
+  return Object.keys(value).some(isPrivateAcpVisibleKey);
+}
+
+function isPrivateHistoryContentType(value: unknown): boolean {
+  return typeof value === "string" && isPrivateAcpVisibleKey(value);
+}
+
+
+
+function replayToolCall(block: Record<string, unknown>): SessionUpdate | undefined {
+  const toolCallId = firstNonEmptyString(block.id, block.toolCallId, block.callId);
+  if (toolCallId === undefined) {
+    return undefined;
+  }
+  const name = firstNonEmptyString(block.name, block.toolName) ?? toolCallId;
+  const rawInput = sanitizeToolInput(parseToolInput(block.arguments ?? block.args ?? block.input ?? block.rawInput));
+  return toolExecutionStartToUpdate({
+    type: "tool_execution_start",
+    toolCallId,
+    toolName: name,
+    args: rawInput,
+    status: block.status,
+    ...(typeof block.title === "string" ? { title: block.title } : {}),
+    ...(typeof block.kind === "string" ? { kind: block.kind } : {}),
+    ...(typeof block.path === "string" ? { path: block.path } : {}),
+    ...(typeof block.line === "number" ? { line: block.line } : {}),
+  });
+}
+
+function replayToolResult(message: Record<string, unknown>): SessionUpdate | undefined {
+  const toolCallId = firstNonEmptyString(message.toolCallId, message.id, message.callId);
+  if (toolCallId === undefined) {
+    return undefined;
+  }
+  const payload = buildToolResultPayload(message);
+  return toolExecutionEndToUpdate({
+    type: "tool_execution_end",
+    toolCallId,
+    toolName: firstNonEmptyString(message.toolName, message.name),
+    status: message.isError === true ? "failed" : "completed",
+    ...payload,
+    ...(typeof message.path === "string" ? { path: message.path } : {}),
+    ...(typeof message.line === "number" ? { line: message.line } : {}),
+  });
+}
+
+function normalizeContentItems(content: unknown, path: string, line: number): unknown[] {
   if (typeof content === "string") {
+    return [content];
+  }
+  if (Array.isArray(content)) {
     return content;
   }
-  if (Array.isArray(content) && content.length > 0 && content.every(isTextContentBlock)) {
-    return content.map((block) => block.text).join("");
+  if (isRecord(content)) {
+    return [content];
   }
-  if (isTextContentBlock(content)) {
-    return content.text;
+  if (content === undefined || content === null) {
+    return [];
   }
   throw new Error(`Unsupported OMP message content in ${path}:${line}`);
 }
 
-function isTextContentBlock(value: unknown): value is { type: "text"; text: string } {
-  return isRecord(value) && value.type === "text" && typeof value.text === "string";
+
+function buildToolResultPayload(message: Record<string, unknown>): Record<string, unknown> {
+  const content = contentItemsToToolCallContent(message.content, { unknownText: "summarize" }).map((item) => item.content);
+  const result: Record<string, unknown> = {};
+  if (message.rawOutput !== undefined) {
+    result.rawOutput = mergeExplicitContentIntoResult(message.rawOutput, content);
+  } else if (message.output !== undefined) {
+    result.output = mergeExplicitContentIntoResult(message.output, content);
+  } else if (message.result !== undefined) {
+    result.result = mergeExplicitContentIntoResult(message.result, content);
+  } else {
+    const fallbackResult: Record<string, unknown> = { content };
+    if (isRecord(message.details)) {
+      const sanitizedDetails = sanitizeToolInput(message.details);
+      if (sanitizedDetails !== undefined) fallbackResult.details = sanitizedDetails;
+    }
+    result.result = fallbackResult;
+  }
+  if (content.length > 0 && (typeof message.rawOutput === "string" || typeof message.output === "string" || typeof message.result === "string")) result.content = content;
+  return result;
+}
+
+function mergeExplicitContentIntoResult(value: unknown, content: unknown[]): unknown {
+  if (content.length === 0) return value;
+  if (!isRecord(value)) return value;
+  if (value.content !== undefined) return mergeOrReplaceContent(value, content);
+  return { ...value, content };
+}
+
+function mergeOrReplaceContent(value: Record<string, unknown>, explicitContent: unknown[]): unknown {
+  const existingContent = contentItemsToToolCallContent(value.content, { unknownText: "drop" }).map((item) => item.content);
+  const mergedContent = existingContent.length > 0 ? existingContent : explicitContent;
+  return mergedContent.length > 0 ? { ...value, content: mergedContent } : value;
+}
+
+
+function firstNonEmptyString(...values: unknown[]): string | undefined {
+  for (const value of values) {
+    if (typeof value === "string" && value.length > 0) {
+      return value;
+    }
+  }
+  return undefined;
 }
 
 function parseJsonLine(line: string, path: string, lineNumber: number): unknown {

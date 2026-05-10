@@ -5,6 +5,7 @@ let stdinBuffer = "";
 let handledRequests = 0;
 let pendingCancelPrompt: { id: unknown; params: unknown } | undefined;
 let pendingHostToolPrompt: { id: unknown; params: unknown } | undefined;
+let pendingConfirmPrompt: { promptId: unknown; uiId: string } | undefined;
 
 const availableModels = [
   { provider: "fixture", id: "model", name: "Fixture Model", thinking: { minLevel: "minimal", maxLevel: "high" } },
@@ -18,7 +19,9 @@ const controlState = {
   followUpMode: "one-at-a-time",
   interruptMode: "immediate",
   autoCompactionEnabled: true,
+  sessionId: "fixture-runtime-session",
 };
+let activeToolNames = ["read", "ask", "plugin_tool"];
 
 function writeFrame(frame: JsonObject): void {
   process.stdout.write(`${JSON.stringify(frame)}\n`);
@@ -55,6 +58,16 @@ function handleRequest(request: JsonObject): void {
     }
   }
 
+  if (command === "extension_ui_response") {
+    if (pendingConfirmPrompt !== undefined && request.id === pendingConfirmPrompt.uiId) {
+      const confirmed = request.confirmed === true;
+      writeFrame({ type: "message_update", content: confirmed ? "confirm accepted" : "confirm rejected" });
+      pendingConfirmPrompt = undefined;
+      writeAgentEnd();
+    }
+    return;
+  }
+
   if (scenario === "session-host-tool-unregistered" && command === "host_tool_result") {
     const pending = pendingHostToolPrompt;
     pendingHostToolPrompt = undefined;
@@ -79,7 +92,7 @@ function handleRequest(request: JsonObject): void {
     if (scenario === "event-before-response") {
       writeFrame({ type: "message_update", content: "hello" });
     }
-    writeSuccess(id, command, structuredClone(controlState));
+    writeSuccess(id, command, { ...structuredClone(controlState), dumpTools: activeToolNames.map((name) => ({ name })) });
     return;
   }
 
@@ -158,6 +171,16 @@ function handleRequest(request: JsonObject): void {
     return;
   }
 
+  if (command === "set_active_tools") {
+    if (!Array.isArray(request.toolNames) || request.toolNames.some((item) => typeof item !== "string")) {
+      writeFailure(id, command, "invalid active tool names");
+      return;
+    }
+    activeToolNames = [...request.toolNames];
+    writeSuccess(id, command, { toolNames: activeToolNames });
+    return;
+  }
+
   if (command === "prompt" && !isValidPromptCommand(request)) {
     writeFailure(id, command, "invalid prompt command frame");
     return;
@@ -196,6 +219,21 @@ function handleRequest(request: JsonObject): void {
       writeSuccess(id, command, { ok: true });
       writeFrame({ type: "extension_ui_request", method: "setWidget", id: "ui-widget-1", widgetKey: "autoresearch", widgetLines: ["status"] });
       writeFrame({ type: "message_update", content: "widget ignored" });
+      writeAgentEnd();
+      return;
+    }
+
+    if (scenario === "extension-ui-confirm" || scenario === "extension-ui-confirm-reject") {
+      writeSuccess(id, command, { ok: true });
+      pendingConfirmPrompt = { promptId: id, uiId: "ui-confirm-1" };
+      writeFrame({ type: "extension_ui_request", method: "confirm", id: "ui-confirm-1", title: "Approve action", message: "Allow action?" });
+      return;
+    }
+
+    if (scenario === "extension-ui-set-widget-display") {
+      writeSuccess(id, command, { ok: true });
+      writeFrame({ type: "extension_ui_request", method: "setWidget", id: "ui-widget-1", widgetKey: "autoresearch", widgetLines: ["Searching", "Done"] });
+      writeFrame({ type: "message_update", content: "widget displayed" });
       writeAgentEnd();
       return;
     }

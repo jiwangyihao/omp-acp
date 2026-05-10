@@ -1,5 +1,5 @@
 import type { LoadSessionRequest, LoadSessionResponse, SessionUpdate } from "@agentclientprotocol/sdk";
-import { buildSessionSetupState, type SessionSetupState } from "../session-controls.ts";
+import { buildSessionSetupState, requireSessionSetupState, toPublicSessionSetupState, type SessionSetupState } from "../session-controls.ts";
 import { findOmpSessionById, loadOmpSessionHistory } from "../../runtime/omp/sessions.ts";
 import type { SessionManager } from "../../session/manager.ts";
 
@@ -27,21 +27,29 @@ export async function handleSessionLoad(
 
   const history = await loadOmpSessionHistory(session.path);
   let setupState: SessionSetupState | undefined;
-  await manager.createSessionWithId(params.sessionId, params, async (runtime) => {
-    await runtime.request("switch_session", { sessionPath: session.path });
-    setupState = await buildSessionSetupState(runtime);
+  const record = await manager.createSessionWithId(params.sessionId, params, {
+    beforeGuard: async (runtime) => {
+      await runtime.request("switch_session", { sessionPath: session.path });
+      return { sessionId: params.sessionId };
+    },
+    afterGuard: async (runtime) => {
+      setupState = await buildSessionSetupState(runtime);
+      return undefined;
+    },
   });
 
-  for (const update of history) {
-    await connection.sessionUpdate({ sessionId: params.sessionId, update });
+  try {
+    for (const update of history) {
+      await connection.sessionUpdate({ sessionId: record.sessionId, update });
+    }
+  } catch (error) {
+    try {
+      await manager.closeSession(record.sessionId, record.runtime);
+    } catch (cleanupError) {
+      throw new AggregateError([error, cleanupError], "session/load history replay failed and rollback cleanup failed");
+    }
+    throw error;
   }
 
-  return requireSetupState(setupState);
-}
-
-function requireSetupState(setupState: SessionSetupState | undefined): SessionSetupState {
-  if (setupState === undefined) {
-    throw new Error("Session setup state was not built before publish");
-  }
-  return setupState;
+  return toPublicSessionSetupState(requireSessionSetupState(setupState));
 }

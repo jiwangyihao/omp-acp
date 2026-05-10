@@ -12,6 +12,7 @@ import { SessionManager, SessionManagerError, type RuntimeFactoryInput } from ".
 const CONTROL_STATE = {
   model: { provider: "p", id: "m1", name: "Model One" },
   thinkingLevel: "low",
+  sessionId: "omp-runtime-session",
   steeringMode: "all",
   followUpMode: "one-at-a-time",
   interruptMode: "immediate",
@@ -26,25 +27,43 @@ class FakeRuntimeAdapter implements RuntimeAdapter {
   readonly requests: Array<{ method: string; params?: unknown }> = [];
   switchSessionFailure: unknown;
   getStateFailure: unknown;
+  getAvailableModelsFailure: unknown;
+  setActiveToolsFailure: unknown;
   onSwitchSession: (() => void) | undefined;
   closeCalls = 0;
+  #switchedToForkSession = false;
+  #activeToolNames: string[] | undefined;
 
   async request(method: string, params?: unknown): Promise<unknown> {
     this.requests.push({ method, params });
     if (method === "switch_session") {
       this.onSwitchSession?.();
-    }
-    if (method === "switch_session" && this.switchSessionFailure !== undefined) {
-      throw this.switchSessionFailure;
+      if (this.switchSessionFailure !== undefined) {
+        throw this.switchSessionFailure;
+      }
+      this.#switchedToForkSession = true;
+      return { ok: true };
     }
     if (method === "get_state") {
       if (this.getStateFailure !== undefined) throw this.getStateFailure;
-      return structuredClone(CONTROL_STATE);
+      return structuredClone({ ...CONTROL_STATE, dumpTools: this.#dumpTools() });
     }
     if (method === "get_available_models") {
+      if (this.getAvailableModelsFailure !== undefined) throw this.getAvailableModelsFailure;
       return structuredClone(AVAILABLE_MODELS);
     }
+    if (method === "set_active_tools") {
+      if (this.setActiveToolsFailure !== undefined) throw this.setActiveToolsFailure;
+      const toolNames = typeof params === "object" && params !== null ? (params as { toolNames?: unknown }).toolNames : undefined;
+      this.#activeToolNames = Array.isArray(toolNames) ? toolNames.filter((name): name is string => typeof name === "string") : [];
+      return { ok: true };
+    }
     return undefined;
+  }
+
+  #dumpTools(): Array<{ name: string }> {
+    const names = this.#switchedToForkSession ? (this.#activeToolNames ?? ["ask", "bash"]) : ["bash"];
+    return names.map((name) => ({ name }));
   }
 
   async send(): Promise<void> {}
@@ -58,7 +77,15 @@ class FakeRuntimeAdapter implements RuntimeAdapter {
   }
 }
 
-function createHarness(options: { switchSessionFailure?: unknown; getStateFailure?: unknown; onSwitchSession?: () => void } = {}) {
+function createHarness(
+  options: {
+    switchSessionFailure?: unknown;
+    getStateFailure?: unknown;
+    getAvailableModelsFailure?: unknown;
+    setActiveToolsFailure?: unknown;
+    onSwitchSession?: () => void;
+  } = {},
+) {
   const runtimes: FakeRuntimeAdapter[] = [];
   const inputs: RuntimeFactoryInput[] = [];
   const ids = ["fork-session"];
@@ -69,6 +96,8 @@ function createHarness(options: { switchSessionFailure?: unknown; getStateFailur
       const runtime = new FakeRuntimeAdapter();
       runtime.switchSessionFailure = options.switchSessionFailure;
       runtime.getStateFailure = options.getStateFailure;
+      runtime.getAvailableModelsFailure = options.getAvailableModelsFailure;
+      runtime.setActiveToolsFailure = options.setActiveToolsFailure;
       runtimes.push(runtime);
       runtime.onSwitchSession = options.onSwitchSession;
       return runtime;
@@ -127,17 +156,22 @@ test("forkSession creates an OMP fork file, switches runtime before publishing, 
   assert.ok(response.models);
   assert.ok(response.modes);
   assert.ok(response.configOptions?.some((option) => option.id === "model"));
+  assert.equal(Object.hasOwn(response, "runtimeSessionId"), false);
   assert.equal(inputs.length, 1);
   assert.deepEqual(inputs[0], { sessionId: "fork-session", cwd, mcpServers: [] });
   assert.equal(runtimes.length, 1);
-  assert.deepEqual(runtimes[0]?.requests.slice(0, 3), [
-    { method: "switch_session", params: { sessionPath: (runtimes[0]?.requests[0]?.params as { sessionPath: string }).sessionPath } },
+  const requests = runtimes[0]?.requests ?? [];
+  const switchRequest = requests.find((request) => request.method === "switch_session");
+  assert.ok(switchRequest);
+  const forkPath = (switchRequest.params as { sessionPath: string }).sessionPath;
+  assert.deepEqual(requests, [
+    { method: "switch_session", params: { sessionPath: forkPath } },
+    { method: "get_state", params: undefined },
+    { method: "set_active_tools", params: { toolNames: ["bash"] } },
     { method: "get_state", params: undefined },
     { method: "get_available_models", params: undefined },
   ]);
-  const switchRequest = runtimes[0]?.requests[0];
-  assert.notEqual((switchRequest?.params as { sessionPath?: string }).sessionPath, sourcePath);
-  const forkPath = (switchRequest?.params as { sessionPath: string }).sessionPath;
+  assert.notEqual(forkPath, sourcePath);
   const forkHeader = JSON.parse((await readFile(forkPath, "utf8")).split(/\r?\n/)[0]!);
   assert.equal(forkHeader.parentSession, "source-session");
   const session = manager.requireSession("fork-session");
@@ -211,13 +245,30 @@ test("forkSession does not publish a fork and removes fork file when switch_sess
   assert.equal(await findOmpSessionById("fork-session", { agentDir }), undefined);
 });
 
+test("forkSession does not publish a fork and removes fork file when ask guard fails", async () => {
+  const agentDir = await tempAgentDir();
+  const cwd = join(tmpdir(), "fork-ask-failure");
+  await writeSession(agentDir, cwd, "source-session", [{ type: "session", id: "source-session", cwd }]);
+  const { manager } = createHarness({ setActiveToolsFailure: new Error("set active failed") });
+
+  await assert.rejects(handleSessionFork(forkRequest(cwd), manager, { agentDir }), /Runtime failed to become ready/);
+  assert.throws(() => manager.requireSession("fork-session"), /Unknown session/);
+  assert.equal(await findOmpSessionById("fork-session", { agentDir }), undefined);
+});
+
 test("forkSession does not publish a fork and removes fork file when setup state build fails", async () => {
   const agentDir = await tempAgentDir();
   const cwd = join(tmpdir(), "fork-state-failure");
   await writeSession(agentDir, cwd, "source-session", [{ type: "session", id: "source-session", cwd }]);
-  const { manager } = createHarness({ getStateFailure: new Error("state failed") });
+  const { manager, runtimes } = createHarness({ getAvailableModelsFailure: new Error("state failed") });
 
   await assert.rejects(handleSessionFork(forkRequest(cwd), manager, { agentDir }), /Runtime failed to become ready/);
+  const requests = runtimes[0]?.requests ?? [];
+  const setActiveToolsIndex = requests.findIndex((request) => request.method === "set_active_tools");
+  const getAvailableModelsIndex = requests.findIndex((request) => request.method === "get_available_models");
+  assert.notEqual(setActiveToolsIndex, -1);
+  assert.notEqual(getAvailableModelsIndex, -1);
+  assert.ok(setActiveToolsIndex < getAvailableModelsIndex);
   assert.throws(() => manager.requireSession("fork-session"), /Unknown session/);
   assert.equal(await findOmpSessionById("fork-session", { agentDir }), undefined);
 });
@@ -254,7 +305,7 @@ test("forkSession preserves setup state failure details when cleanup also fails"
   const agentDir = await tempAgentDir();
   const cwd = join(tmpdir(), "fork-state-cleanup-failure");
   await writeSession(agentDir, cwd, "source-session", [{ type: "session", id: "source-session", cwd }]);
-  const { manager } = createHarness({ getStateFailure: new Error("state failed") });
+  const { manager } = createHarness({ getAvailableModelsFailure: new Error("state failed") });
 
   await assert.rejects(
     handleSessionFork(forkRequest(cwd), manager, {
