@@ -56,8 +56,8 @@ For the manual Zed release gate, follow `scripts/smoke-zed.md`.
 ## Currently declared ACP support
 
 - `session/new`
-- `session/prompt` 支持 `text`、`resource_link`、`image` 和 embedded `resource` context；真实 OMP `assistantMessageEvent.text_delta` / `thinking_delta` 会分别流式输出为 message/thought chunk，`agent_end.messages` 只作为去重 fallback，确保最终 assistant 文本在 `end_turn` 返回前先发送给 client。
-- `session/cancel` best-effort cancellation
+- `session/prompt` 支持 `text`、`resource_link`、`image` 和 embedded `resource` context；真实 OMP `assistantMessageEvent.text_delta` / `thinking_delta` 会分别流式输出为 message/thought chunk，`agent_end.messages` 只作为去重 fallback，收到 `agent_end` 后还会确认 OMP runtime 已 idle 再返回 `end_turn`。生成中收到新的普通 prompt 时，adapter 会先等待当前活动 prompt cleanup，再把该请求作为独立的新 OMP `prompt` 发送，而不是把第二条直接打到 busy runtime。
+- `session/cancel` best-effort cancellation；取消后的下一条 prompt 会等旧 runtime cleanup 完成后再发往 OMP。ACP 0.21.0 没有标准单步“打断并发送新消息”方法，当前只能通过 `session/cancel` + 下一条 `session/prompt` 组合模拟。
 - message 与 thought chunk，包括真实 OMP Assistant streaming delta。
 - tool call、tool update、failed/cancelled tool status，以及已测试 OMP event shape 的 structured diff content；ACP-visible content、`rawInput`、`rawOutput` 会先经过共享安全边界净化，再发送给 client。
 - `session/list`, `session/load`, and `session/resume`

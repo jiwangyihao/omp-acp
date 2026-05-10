@@ -172,7 +172,10 @@ test("loadSession switches runtime to OMP session path, replays text history, an
   ]);
 
   await agent.prompt({ sessionId: "load-me", prompt: [{ type: "text", text: "next" }] });
-  assert.equal(runtimes[0]?.requests.at(-1)?.method, "prompt");
+  assert.deepEqual(runtimes[0]?.requests.slice(-2), [
+    { method: "prompt", params: { message: "next" } },
+    { method: "get_state", params: undefined },
+  ]);
 });
 
 test("loadSession fails clearly for unknown sessions and unsupported history", async () => {

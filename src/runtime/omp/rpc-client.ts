@@ -193,6 +193,10 @@ export class OmpRpcClient implements RuntimeAdapter {
     if (isOmpRpcResponseFrame(frame)) {
       const pending = this.pending.get(frame.id);
       if (pending === undefined) {
+        if (isLatePromptErrorFrame(frame)) {
+          this.diagnostics.stderr += `OMP RPC ${frame.command} late error after acknowledgement: ${frame.error}\n`;
+          return;
+        }
         throw new OmpRpcClientError(`Received OMP RPC response for unknown request id: ${String(frame.id)}`);
       }
 
@@ -258,9 +262,15 @@ export function startOmpRpcClient(options?: OmpRpcClientOptions): OmpRpcClient {
   return new OmpRpcClient(options);
 }
 
+const PROMPT_LIKE_COMMANDS = new Set(["prompt", "steer", "follow_up", "abort_and_prompt"]);
+
+
 function buildCommandFrame(id: OmpRpcRequestId, method: string, params: unknown): Record<string, unknown> {
   switch (method) {
-    case "prompt": {
+    case "prompt":
+    case "steer":
+    case "follow_up":
+    case "abort_and_prompt": {
       const promptParams = requireRecord(params, method);
       const message = requireString(promptParams, "message", method);
       const frame: Record<string, unknown> = { id, type: method, message };
@@ -299,6 +309,10 @@ function buildCommandFrame(id: OmpRpcRequestId, method: string, params: unknown)
     default:
       throw new OmpRpcClientError(`Unsupported OMP RPC method: ${method}`);
   }
+}
+
+function isLatePromptErrorFrame(frame: { command: string; success: boolean; error?: string }): frame is { command: string; success: false; error: string } {
+  return !frame.success && PROMPT_LIKE_COMMANDS.has(frame.command);
 }
 
 function requireRecord(value: unknown, command: string): Record<string, unknown> {

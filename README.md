@@ -40,6 +40,8 @@ The adapter disables OMP's general `ask` tool without passing a static `--tools`
 
 Assistant streaming 复用共享 message 映射。实时路径支持真实 OMP `assistantMessageEvent.text_delta` / `thinking_delta`；如果 runtime 只在 `agent_end.messages` 提供最终 assistant 内容，adapter 会在返回 `end_turn` 前补发未被 streaming 覆盖的文本或思考内容，并避免重复展示已发送的 chunk。ACP-visible content、tool `rawInput` 和 `rawOutput` 复用共享净化边界，provider-private payload、config、key、token、signature、encrypted 字段和 encrypted reasoning 不会发送给 ACP client。
 
+Prompt lifecycle handling is intentionally stricter than the raw OMP RPC acknowledgement. The adapter treats OMP `prompt` responses as acceptance only, waits for `agent_end` plus idle `get_state` before returning ACP `end_turn`, and holds concurrent ordinary ACP prompts until the active prompt has fully cleaned up before sending the next OMP `prompt`. Direct interrupt-and-replace is not an ACP 0.21.0 primitive; clients can approximate it with `session/cancel` followed by a new `session/prompt`, which the adapter holds until the cancelled runtime turn has cleaned up.
+
 The adapter is still not a complete coding-agent bridge: `session/close`, MCP, filesystem and terminal delegation, command execution, usage updates, and broad real-OMP parity remain unimplemented or unsupported and are not declared as supported capabilities. `session/fork` does not support message-bound fork or `_meta.messageId` / `_meta.messageID`.
 
 ## Installation

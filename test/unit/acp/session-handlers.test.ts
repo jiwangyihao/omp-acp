@@ -42,11 +42,13 @@ class FakeRuntimeAdapter implements RuntimeAdapter {
   closeCalls = 0;
   readonly sentFrames: Record<string, unknown>[] = [];
   nextSendError: Error | undefined;
+  state: Record<string, unknown> = { ...structuredClone(CONTROL_STATE), isStreaming: false };
+
 
   request(method: string, params?: unknown): Promise<unknown> {
     this.requests.push({ method, params });
     if (method === "get_state") {
-      return Promise.resolve(structuredClone(CONTROL_STATE));
+      return Promise.resolve(structuredClone(this.state));
     }
     if (method === "get_available_models") {
       return Promise.resolve(structuredClone(AVAILABLE_MODELS));
@@ -55,6 +57,9 @@ class FakeRuntimeAdapter implements RuntimeAdapter {
       const deferred = new Deferred<unknown>();
       this.promptDeferreds.push(deferred);
       return deferred.promise;
+    }
+    if (method === "follow_up" || method === "steer" || method === "abort_and_prompt") {
+      return Promise.resolve({ ok: true });
     }
     return Promise.resolve(undefined);
   }
@@ -201,6 +206,47 @@ test("prompt stays active until runtime emits agent_end", async () => {
   assert.deepEqual(await promptPromise, { stopReason: "end_turn" });
 });
 
+test("prompt waits for runtime idle state after agent_end before returning end_turn", async () => {
+  const { manager, connection, runtime } = await createSession();
+
+  const promptPromise = handleSessionPrompt(promptRequest(), { manager, connection });
+  runtime.state.isStreaming = true;
+  let settled = false;
+  promptPromise.then(() => {
+    settled = true;
+  });
+
+  runtime.promptDeferreds[0]!.resolve({});
+  runtime.emit({ type: "event", eventType: "agent_end", raw: {} });
+  await new Promise<void>((resolve) => setImmediate(resolve));
+
+  assert.equal(settled, false);
+  assert.equal(runtime.listeners.size, 1);
+
+  runtime.state.isStreaming = false;
+  await waitForCondition(() => runtime.requests.filter((request) => request.method === "get_state").length >= 2);
+  assert.deepEqual(await promptPromise, { stopReason: "end_turn" });
+});
+
+test("concurrent prompt waits for active cleanup before starting a new turn", async () => {
+  const { manager, connection, runtime } = await createSession();
+
+  const firstPrompt = handleSessionPrompt(promptRequest(), { manager, connection });
+  const secondPrompt = handleSessionPrompt(promptRequest({ prompt: [{ type: "text", text: "second" }] }), { manager, connection });
+  await new Promise<void>((resolve) => setImmediate(resolve));
+
+  assert.equal(runtime.promptDeferreds.length, 1, "queued prompt must not start while the active prompt is still owned");
+  assert.equal(runtime.requests.some((request) => request.method === "follow_up"), false);
+
+  finishRuntimePrompt(runtime, 0);
+  assert.deepEqual(await firstPrompt, { stopReason: "end_turn" });
+
+  await waitForCondition(() => runtime.promptDeferreds.length === 2);
+  assert.deepEqual(runtime.requests.at(-1), { method: "prompt", params: { message: "second" } });
+  finishRuntimePrompt(runtime, 1);
+  assert.deepEqual(await secondPrompt, { stopReason: "end_turn" });
+});
+
 test("prompt bridges confirm permission and stays active until agent_end", async () => {
   const { manager, connection, runtime } = await createSession();
 
@@ -235,6 +281,32 @@ test("prompt bridges confirm permission and stays active until agent_end", async
   await new Promise<void>((resolve) => setImmediate(resolve));
   assert.equal(settled, false);
 
+  runtime.emit({ type: "event", eventType: "agent_end", raw: {} });
+  connection.resolveAllUpdates();
+  assert.deepEqual(await promptPromise, { stopReason: "end_turn" });
+});
+
+test("confirm permission continues blocking queued prompts after streamed updates", async () => {
+  const { manager, connection, runtime } = await createSession();
+
+  const promptPromise = handleSessionPrompt(promptRequest(), { manager, connection });
+  runtime.promptDeferreds[0]!.resolve({});
+  runtime.emit({
+    type: "event",
+    eventType: "extension_ui_request",
+    raw: { method: "confirm", id: "ui-1", title: "Approve", message: "Allow action?" },
+  });
+  await waitForCondition(() => connection.permissionRequests.length === 1);
+
+  runtime.emit({ type: "event", eventType: "message_update", raw: { content: "still waiting" } });
+  await assert.rejects(
+    handleSessionPrompt(promptRequest({ prompt: [{ type: "text", text: "second" }] }), { manager, connection }),
+    /active prompt/,
+  );
+  assert.equal(runtime.requests.some((request) => request.method === "follow_up"), false);
+
+  connection.permissionDeferreds[0]!.resolve({ outcome: { outcome: "selected", optionId: "allow" } });
+  await waitForCondition(() => runtime.sentFrames.length === 1);
   runtime.emit({ type: "event", eventType: "agent_end", raw: {} });
   connection.resolveAllUpdates();
   assert.deepEqual(await promptPromise, { stopReason: "end_turn" });
@@ -517,7 +589,7 @@ test("cancelled prompt cleanup is bounded when runtime prompt never settles", as
   assert.throws(() => manager.requireSession("session-1"), /Unknown session/);
 });
 
-test("cancelled prompt retains ownership until runtime prompt settles", async () => {
+test("cancelled prompt waits for runtime idle cleanup before starting the next prompt", async () => {
   const { manager, connection, runtime } = await createSession();
 
   const firstPrompt = handleSessionPrompt(promptRequest(), { manager, connection });
@@ -527,22 +599,24 @@ test("cancelled prompt retains ownership until runtime prompt settles", async ()
 
   const secondPrompt = handleSessionPrompt(promptRequest({ prompt: [{ type: "text", text: "second" }] }), { manager, connection });
   await Promise.resolve();
-  assert.equal(runtime.promptDeferreds.length, 1, "second prompt must be rejected before reaching runtime");
-  await assert.rejects(secondPrompt, /active prompt/);
+  assert.equal(runtime.promptDeferreds.length, 1, "second prompt must wait for cancelled prompt cleanup");
 
   runtime.emit({ type: "event", eventType: "message_update", raw: { content: "too late" } });
   assert.deepEqual(connection.updates, []);
 
+  runtime.state.isStreaming = true;
   finishRuntimePrompt(runtime, 0);
-  await waitForCondition(() => runtime.listeners.size === 0);
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.equal(runtime.promptDeferreds.length, 1, "second prompt must wait until cancelled runtime reports idle");
 
-  const thirdPrompt = handleSessionPrompt(promptRequest({ prompt: [{ type: "text", text: "third" }] }), { manager, connection });
-  assert.equal(runtime.promptDeferreds.length, 2);
+  runtime.state.isStreaming = false;
+  await waitForCondition(() => runtime.promptDeferreds.length === 2);
+
   finishRuntimePrompt(runtime, 1);
-  assert.deepEqual(await thirdPrompt, { stopReason: "end_turn" });
+  assert.deepEqual(await secondPrompt, { stopReason: "end_turn" });
 });
 
-test("cancelled prompt waits for agent_end when prompt command later rejects", async () => {
+test("cancelled prompt waits for agent_end after prompt command rejects before starting the next prompt", async () => {
   const { manager, connection, runtime } = await createSession();
 
   const firstPrompt = handleSessionPrompt(promptRequest(), { manager, connection });
@@ -554,16 +628,32 @@ test("cancelled prompt waits for agent_end when prompt command later rejects", a
 
   const secondPrompt = handleSessionPrompt(promptRequest({ prompt: [{ type: "text", text: "second" }] }), { manager, connection });
   await Promise.resolve();
-  assert.equal(runtime.promptDeferreds.length, 1, "second prompt must be rejected before reaching runtime");
-  await assert.rejects(secondPrompt, /active prompt/);
+  assert.equal(runtime.promptDeferreds.length, 1, "second prompt must wait for cancelled prompt cleanup");
 
   runtime.emit({ type: "event", eventType: "agent_end", raw: {} });
-  await waitForCondition(() => runtime.listeners.size === 0);
+  await waitForCondition(() => runtime.promptDeferreds.length === 2);
 
-  const thirdPrompt = handleSessionPrompt(promptRequest({ prompt: [{ type: "text", text: "third" }] }), { manager, connection });
-  assert.equal(runtime.promptDeferreds.length, 2);
   finishRuntimePrompt(runtime, 1);
-  assert.deepEqual(await thirdPrompt, { stopReason: "end_turn" });
+  assert.deepEqual(await secondPrompt, { stopReason: "end_turn" });
+});
+
+test("prompt after internally cancelled prompt waits for cleanup before starting a new prompt", async () => {
+  const { manager, connection, runtime } = await createSession();
+
+  const firstPrompt = handleSessionPrompt(promptRequest(), { manager, connection });
+  await waitForCondition(() => manager.requireSession("session-1").activePrompt !== undefined);
+  manager.requireSession("session-1").activePrompt!.cancellation.cancel();
+  assert.deepEqual(await firstPrompt, { stopReason: "cancelled" });
+
+  const secondPrompt = handleSessionPrompt(promptRequest({ prompt: [{ type: "text", text: "replacement" }] }), { manager, connection });
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.equal(runtime.promptDeferreds.length, 1, "replacement prompt must wait for cancelled prompt cleanup");
+
+  finishRuntimePrompt(runtime, 0);
+  await waitForCondition(() => runtime.promptDeferreds.length === 2);
+
+  finishRuntimePrompt(runtime, 1);
+  assert.deepEqual(await secondPrompt, { stopReason: "end_turn" });
 });
 
 test("normal prompt drains updates appended while earlier deliveries are pending", async () => {
@@ -596,10 +686,14 @@ test("normal prompt drains updates appended while earlier deliveries are pending
   );
 });
 
-test("cancel during update drain returns cancelled and releases prompt", async () => {
+test("cancel during update drain waits for cleanup before releasing next prompt", async () => {
   const { manager, connection, runtime } = await createSession();
 
-  const promptPromise = handleSessionPrompt(promptRequest(), { manager, connection });
+  const promptPromise = handleSessionPrompt(promptRequest(), {
+    manager,
+    connection,
+    cancelledPromptCleanupTimeoutMs: 1,
+  });
   runtime.emit({ type: "event", eventType: "message_update", raw: { content: "first" } });
   finishRuntimePrompt(runtime, 0);
   await new Promise<void>((resolve) => setImmediate(resolve));
@@ -607,11 +701,30 @@ test("cancel during update drain returns cancelled and releases prompt", async (
   await handleSessionCancel({ sessionId: "session-1" }, manager);
 
   assert.deepEqual(await promptPromise, { stopReason: "cancelled" });
-  assert.equal(runtime.listeners.size, 0);
+
+  const nextPrompt = handleSessionPrompt(promptRequest({ prompt: [{ type: "text", text: "next" }] }), { manager, connection });
+  await assert.rejects(nextPrompt, /Timed out waiting for cancelled OMP prompt cleanup/);
+  assert.equal(runtime.promptDeferreds.length, 1, "next prompt must not start after cancelled cleanup failure");
+  assert.throws(() => manager.requireSession("session-1"), /Unknown session/);
 
   connection.updateDeferreds[0]!.resolve();
+});
+
+test("prompt after cancelled update drain waits for cleanup before starting", async () => {
+  const { manager, connection, runtime } = await createSession();
+
+  const promptPromise = handleSessionPrompt(promptRequest(), { manager, connection });
+  runtime.emit({ type: "event", eventType: "message_update", raw: { content: "first" } });
+  finishRuntimePrompt(runtime, 0);
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  await handleSessionCancel({ sessionId: "session-1" }, manager);
+  assert.deepEqual(await promptPromise, { stopReason: "cancelled" });
+
+  connection.updateDeferreds[0]!.resolve();
+  await waitForCondition(() => manager.requireSession("session-1").activePrompt === undefined);
+
   const nextPrompt = handleSessionPrompt(promptRequest({ prompt: [{ type: "text", text: "next" }] }), { manager, connection });
-  assert.equal(runtime.promptDeferreds.length, 2);
+  await waitForCondition(() => runtime.promptDeferreds.length === 2);
   finishRuntimePrompt(runtime, 1);
   assert.deepEqual(await nextPrompt, { stopReason: "end_turn" });
 });
@@ -640,6 +753,21 @@ test("event translation failure stops accepting same-turn assistant updates", as
 
   await assert.rejects(promptPromise, /Runtime extension error: boom/);
   assert.deepEqual(connection.updates, []);
+});
+
+test("queued prompt fails when active prompt cleanup fails", async () => {
+  const { manager, connection, runtime } = await createSession();
+
+  const firstPrompt = handleSessionPrompt(promptRequest(), { manager, connection });
+  const queuedPrompt = handleSessionPrompt(promptRequest({ prompt: [{ type: "text", text: "queued" }] }), { manager, connection });
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.equal(runtime.promptDeferreds.length, 1);
+
+  runtime.emit({ type: "event", eventType: "extension_error", raw: { message: "boom" } });
+
+  await assert.rejects(firstPrompt, /Runtime extension error: boom/);
+  await assert.rejects(queuedPrompt, /Runtime extension error: boom/);
+  assert.equal(runtime.promptDeferreds.length, 1, "failed active prompt must not start queued prompt");
 });
 
 test("event failure suppresses late duplicate agent_end messages fallback and preserves rejection", async () => {
@@ -791,12 +919,20 @@ test("late host tool events after cancel are suppressed", async () => {
   assert.deepEqual(connection.updates, []);
   assert.deepEqual(runtime.sentFrames, []);
 });
-test("concurrent prompt rejects", async () => {
+test("concurrent text prompt is queued after the active prompt", async () => {
   const { manager, connection, runtime } = await createSession();
 
   const firstPrompt = handleSessionPrompt(promptRequest(), { manager, connection });
-  await assert.rejects(handleSessionPrompt(promptRequest({ prompt: [{ type: "text", text: "second" }] }), { manager, connection }), /active prompt/);
+  const secondPrompt = handleSessionPrompt(promptRequest({ prompt: [{ type: "text", text: "second" }] }), { manager, connection });
+  await new Promise<void>((resolve) => setImmediate(resolve));
 
+  assert.equal(runtime.promptDeferreds.length, 1);
+  assert.equal(runtime.requests.some((request) => request.method === "follow_up"), false);
   finishRuntimePrompt(runtime, 0);
   assert.deepEqual(await firstPrompt, { stopReason: "end_turn" });
+
+  await waitForCondition(() => runtime.promptDeferreds.length === 2);
+  assert.deepEqual(runtime.requests.at(-1), { method: "prompt", params: { message: "second" } });
+  finishRuntimePrompt(runtime, 1);
+  assert.deepEqual(await secondPrompt, { stopReason: "end_turn" });
 });

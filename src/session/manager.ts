@@ -3,6 +3,13 @@ import type { ForkSessionRequest, LoadSessionRequest, NewSessionRequest, NewSess
 import type { RuntimeAdapter } from "../runtime/RuntimeAdapter.ts";
 import { PromptCancellation } from "./cancellation.ts";
 
+export type ActivePromptOutcome =
+  | { status: "idle" }
+  | { status: "cancelled" }
+  | { status: "closed" }
+  | { status: "error"; error: unknown };
+
+
 export class SessionManagerError extends Error {
   constructor(message: string, options?: ErrorOptions) {
     super(message, options);
@@ -70,6 +77,9 @@ function normalizeCreateSessionHooks(hooks?: CreateSessionPublishHooks): CreateS
 
 export type ActivePrompt = {
   cancellation: PromptCancellation;
+  acceptsQueuedPrompt: boolean;
+  completion: Promise<ActivePromptOutcome>;
+  complete: (outcome: ActivePromptOutcome) => void;
 };
 
 export type SessionRecord = {
@@ -228,7 +238,7 @@ export class SessionManager {
     return session;
   }
 
-  beginPrompt(sessionId: string): { session: SessionRecord; cancellation: PromptCancellation; finish: () => void } {
+  beginPrompt(sessionId: string): { session: SessionRecord; cancellation: PromptCancellation; finish: (outcome?: ActivePromptOutcome) => void } {
     const session = this.requireSession(sessionId);
     if (this.#activeForkSources.has(sessionId)) {
       throw new SessionManagerError(`Session is being forked: ${sessionId}`);
@@ -237,14 +247,31 @@ export class SessionManager {
       throw new SessionManagerError(`Session already has an active prompt: ${sessionId}`);
     }
 
-    const activePrompt: ActivePrompt = { cancellation: new PromptCancellation() };
+    let completed = false;
+    let resolveCompletion!: (outcome: ActivePromptOutcome) => void;
+    const completion = new Promise<ActivePromptOutcome>((resolve) => {
+      resolveCompletion = resolve;
+    });
+    const activePrompt: ActivePrompt = {
+      cancellation: new PromptCancellation(),
+      acceptsQueuedPrompt: true,
+      completion,
+      complete: (outcome) => {
+        if (completed) {
+          return;
+        }
+        completed = true;
+        resolveCompletion(outcome);
+      },
+    };
     session.activePrompt = activePrompt;
 
     return {
       session,
       cancellation: activePrompt.cancellation,
-      finish: () => {
+      finish: (outcome = { status: "idle" }) => {
         if (session.activePrompt === activePrompt) {
+          activePrompt.complete(outcome);
           session.activePrompt = undefined;
         }
       },
@@ -253,7 +280,10 @@ export class SessionManager {
 
   async cancelPrompt(sessionId: string): Promise<void> {
     const session = this.requireSession(sessionId);
-    session.activePrompt?.cancellation.cancel();
+    if (session.activePrompt !== undefined) {
+      session.activePrompt.acceptsQueuedPrompt = false;
+      session.activePrompt.cancellation.cancel();
+    }
 
     try {
       await session.runtime.request("abort");
@@ -271,6 +301,7 @@ export class SessionManager {
     }
 
     this.#sessions.delete(sessionId);
+    session.activePrompt?.complete({ status: "closed" });
     session.activePrompt?.cancellation.cancel();
     session.activePrompt = undefined;
     await session.runtime.close();
@@ -287,6 +318,7 @@ export class SessionManager {
 
     for (const session of sessions) {
       session.activePrompt?.cancellation.cancel();
+      session.activePrompt?.complete({ status: "closed" });
       session.activePrompt = undefined;
     }
 

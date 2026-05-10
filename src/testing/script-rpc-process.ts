@@ -185,6 +185,11 @@ function handleRequest(request: JsonObject): void {
     writeFailure(id, command, "invalid prompt command frame");
     return;
   }
+  if (command === "prompt" && scenario === "late-prompt-like-error") {
+    writeSuccess(id, command);
+    setTimeout(() => writeFailure(id, command, "late prompt failure"), 0);
+    return;
+  }
   if (command === "prompt") {
     if (scenario === "session-happy") {
       const prompt = getPromptText(request);
@@ -283,6 +288,25 @@ function handleRequest(request: JsonObject): void {
       writeSuccess(id, command);
       return;
     }
+  }
+
+  if ((command === "follow_up" || command === "steer" || command === "abort_and_prompt") && !isValidPromptCommand(request)) {
+    writeFailure(id, command, `invalid ${command} command frame`);
+    return;
+  }
+
+  if (command === "follow_up" || command === "steer" || command === "abort_and_prompt") {
+    if (scenario === "raw-frame-observer") {
+      writeSuccess(id, command);
+      return;
+    }
+    if ((scenario === "late-abort-and-prompt-error" && command === "abort_and_prompt") || scenario === "late-prompt-like-error") {
+      writeSuccess(id, command);
+      setTimeout(() => writeFailure(id, command, "late prompt failure"), 0);
+      return;
+    }
+    writeSuccess(id, command, { ok: true });
+    return;
   }
 
   if (command === "abort" && scenario === "session-cancel") {

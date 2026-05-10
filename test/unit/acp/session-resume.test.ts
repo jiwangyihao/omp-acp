@@ -134,10 +134,10 @@ test("resumeSession switches runtime to OMP session path, publishes same session
   assert.deepEqual(updates, []);
 
   await agent.prompt({ sessionId: "resume-me", prompt: [{ type: "text", text: "after resume" }] });
-  assert.deepEqual(runtimes[0]?.requests.at(-1), {
-    method: "prompt",
-    params: { message: "after resume" },
-  });
+  assert.deepEqual(runtimes[0]?.requests.slice(-2), [
+    { method: "prompt", params: { message: "after resume" } },
+    { method: "get_state", params: undefined },
+  ]);
 });
 
 test("resumeSession fails clearly for unknown sessions", async () => {

@@ -93,6 +93,21 @@ test("request serializes real OMP command frames without legacy method or params
         expected: { type: "prompt", message: "hello", images: [{ type: "path", path: "a.png" }] },
       },
       {
+        method: "follow_up",
+        params: { message: "later", images: [{ type: "path", path: "b.png" }] },
+        expected: { type: "follow_up", message: "later", images: [{ type: "path", path: "b.png" }] },
+      },
+      {
+        method: "steer",
+        params: { message: "now" },
+        expected: { type: "steer", message: "now" },
+      },
+      {
+        method: "abort_and_prompt",
+        params: { message: "replace" },
+        expected: { type: "abort_and_prompt", message: "replace" },
+      },
+      {
         method: "switch_session",
         params: { sessionPath: "sessions/one" },
         expected: { type: "switch_session", sessionPath: "sessions/one" },
@@ -259,6 +274,19 @@ test("stderr is captured in diagnostics", async () => {
 
     assertControlState(result);
     assert.match(client.diagnostics.stderr, /fixture warning/);
+  });
+});
+
+test("late prompt-like errors are diagnostic, not fatal unknown responses", async () => {
+  await withClient("late-prompt-like-error", async (client) => {
+    await client.ready;
+
+    const cases = ["prompt", "steer", "follow_up", "abort_and_prompt"];
+    for (const method of cases) {
+      await client.request(method, { message: method });
+      await waitForDiagnostic(client, `OMP RPC ${method} late error after acknowledgement: late prompt failure`);
+      assertControlState(await client.request("get_state"));
+    }
   });
 });
 
