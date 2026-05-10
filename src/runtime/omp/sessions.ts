@@ -5,7 +5,8 @@ import type { SessionUpdate } from "@agentclientprotocol/sdk";
 import { contentItemsToToolCallContent, sanitizeContentBlock } from "../../translate/content.ts";
 import { messageToSessionUpdates as sharedMessageToSessionUpdates } from "../../translate/messages.ts";
 import { isPrivateAcpVisibleKey, parseToolInput, sanitizeTextForAcp, sanitizeToolInput } from "../../translate/safety.ts";
-import { toolExecutionEndToUpdate, toolExecutionStartToUpdate } from "../../translate/tools.ts";
+import { toolExecutionEndToAdditionalUpdates, toolExecutionEndToUpdate, toolExecutionStartToUpdate } from "../../translate/tools.ts";
+import { todoPhasesToPlanUpdate } from "../../translate/todos.ts";
 
 export type OmpSessionInfo = {
   sessionId: string;
@@ -340,7 +341,7 @@ function topLevelHistoryEntryToUpdates(entry: Record<string, unknown>): SessionU
       return customMessageToUpdates(entry);
     case "toolResult":
     case "tool_result":
-      return toUpdates(replayToolResult(entry));
+      return replayToolResult(entry);
     default:
       return [];
   }
@@ -393,10 +394,14 @@ function messageToSessionUpdates(message: Record<string, unknown>, path: string,
     return replayAssistantOrUserMessage(message.role, message, path, line);
   }
   if (message.role === "toolResult") {
-    const update = replayToolResult(message);
-    return update === undefined ? [] : [update];
+    return replayToolResult(message);
   }
-  throw new Error(`Unsupported OMP message role in ${path}:${line}`);
+  const planUpdate = todoLikeMessageToPlanUpdate(message);
+  if (planUpdate !== undefined) {
+    return [planUpdate];
+  }
+  const thoughtUpdate = compatibleNonChatMessageToThoughtUpdate(message);
+  return thoughtUpdate === undefined ? [] : [thoughtUpdate];
 }
 
 function replayAssistantOrUserMessage(role: "user" | "assistant", message: Record<string, unknown>, path: string, line: number): SessionUpdate[] {
@@ -441,6 +446,54 @@ function historyContentItemToUpdates(role: "user" | "assistant", item: unknown):
   return sharedMessageToSessionUpdates({ role, content: [item] }, { unknownText: "drop", includeToolCalls: false });
 }
 
+function compatibleNonChatMessageToThoughtUpdate(message: Record<string, unknown>): SessionUpdate | undefined {
+  const role = firstNonEmptyString(message.role);
+  if (role === undefined) {
+    return undefined;
+  }
+  if (role !== "fileMention" && role !== "tool") {
+    return undefined;
+  }
+  if (hasPrivateAcpVisibleKey(message) || isPrivateHistoryContentType(message.type) || hasPrivateHistoryMarker(message)) {
+    return undefined;
+  }
+  const text = nonChatMessageText(role, message);
+  if (text === undefined) {
+    return undefined;
+  }
+  return thoughtUpdate(`[${sanitizeTextForAcp(role)}]\n${sanitizeTextForAcp(text)}`);
+}
+
+function nonChatMessageText(role: string, message: Record<string, unknown>): string | undefined {
+  if (role === "fileMention") {
+    return fileMentionText(message.files);
+  }
+  return firstNonEmptyString(message.content, message.text, message.summary, message.message);
+}
+
+function fileMentionText(value: unknown): string | undefined {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+  const files = value
+    .map((item) => {
+      if (typeof item === "string") return item;
+      if (isRecord(item)) return firstNonEmptyString(item.path, item.uri, item.name);
+      return undefined;
+    })
+    .filter((item): item is string => item !== undefined && item.length > 0);
+  return files.length === 0 ? undefined : files.join("\n");
+}
+
+function todoLikeMessageToPlanUpdate(message: Record<string, unknown>): SessionUpdate | undefined {
+  const role = message.role;
+  if (role !== "todo" && role !== "todo_write" && role !== "plan") {
+    return undefined;
+  }
+  return todoPhasesToPlanUpdate(message.phases ?? message.todoPhases ?? message.content ?? message.todos ?? message.tasks);
+}
+
+
 function summarizeHistoryUnknownContentBlock(block: Record<string, unknown>): string | undefined {
   if (hasPrivateAcpVisibleKey(block) || isPrivateHistoryContentType(block.type)) return undefined;
   const type = typeof block.type === "string" && block.type.length > 0 ? block.type : "unknown";
@@ -456,6 +509,11 @@ function hasPrivateAcpVisibleKey(value: Record<string, unknown>): boolean {
 
 function isPrivateHistoryContentType(value: unknown): boolean {
   return typeof value === "string" && isPrivateAcpVisibleKey(value);
+}
+
+function hasPrivateHistoryMarker(value: Record<string, unknown>): boolean {
+  return [value.private, value.raw, value.hidden, value.internal].some((marker) => marker === true)
+    || [value.visibility, value.scope, value.kind].some((marker) => marker === "private" || marker === "raw" || marker === "internal");
 }
 
 
@@ -480,13 +538,13 @@ function replayToolCall(block: Record<string, unknown>): SessionUpdate | undefin
   });
 }
 
-function replayToolResult(message: Record<string, unknown>): SessionUpdate | undefined {
+function replayToolResult(message: Record<string, unknown>): SessionUpdate[] {
   const toolCallId = firstNonEmptyString(message.toolCallId, message.id, message.callId);
   if (toolCallId === undefined) {
-    return undefined;
+    return [];
   }
   const payload = buildToolResultPayload(message);
-  return toolExecutionEndToUpdate({
+  const event = {
     type: "tool_execution_end",
     toolCallId,
     toolName: firstNonEmptyString(message.toolName, message.name),
@@ -494,7 +552,34 @@ function replayToolResult(message: Record<string, unknown>): SessionUpdate | und
     ...payload,
     ...(typeof message.path === "string" ? { path: message.path } : {}),
     ...(typeof message.line === "number" ? { line: message.line } : {}),
-  });
+  };
+  const additionalUpdates = toolExecutionEndToAdditionalUpdates(event);
+  const directTodoUpdate = todoPhasesToPlanUpdate(extractToolResultTodoPhases(message));
+  return [
+    toolExecutionEndToUpdate(event),
+    ...(directTodoUpdate === undefined || additionalUpdates.some((update) => update.sessionUpdate === "plan") ? additionalUpdates : [directTodoUpdate, ...additionalUpdates]),
+  ];
+}
+
+function extractToolResultTodoPhases(message: Record<string, unknown>): unknown {
+  const toolName = firstNonEmptyString(message.toolName, message.name);
+  if (toolName !== "todo_write") {
+    return undefined;
+  }
+  const directDetails = isRecord(message.details) ? message.details : undefined;
+  if (directDetails?.phases !== undefined) {
+    return directDetails.phases;
+  }
+  const resultDetails = isRecord(message.result) && isRecord(message.result.details) ? message.result.details : undefined;
+  if (resultDetails?.phases !== undefined) {
+    return resultDetails.phases;
+  }
+  const rawOutputDetails = isRecord(message.rawOutput) && isRecord(message.rawOutput.details) ? message.rawOutput.details : undefined;
+  if (rawOutputDetails?.phases !== undefined) {
+    return rawOutputDetails.phases;
+  }
+  const outputDetails = isRecord(message.output) && isRecord(message.output.details) ? message.output.details : undefined;
+  return outputDetails?.phases;
 }
 
 function normalizeContentItems(content: unknown, path: string, line: number): unknown[] {

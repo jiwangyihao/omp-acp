@@ -6,6 +6,7 @@ import { ExtensionUiBridge } from "../extension-ui.ts";
 import { translateRuntimeEventToSessionUpdate } from "../../translate/events.ts";
 import { agentEndMessagesToFallbackUpdates, streamedAssistantMessageKey } from "../../translate/messages.ts";
 import { translatePromptToOmpRequest } from "../../translate/prompt.ts";
+import { toolExecutionEndToAdditionalUpdates } from "../../translate/tools.ts";
 
 export type SessionPromptConnection = {
   sessionUpdate(params: { sessionId: string; update: SessionUpdate }): Promise<void>;
@@ -180,6 +181,11 @@ export async function handleSessionPrompt(
 
     if (update !== undefined) {
       emitUpdate(update);
+      if (event.eventType === "tool_execution_end") {
+        for (const additionalUpdate of toolExecutionEndToAdditionalUpdates(event.raw)) {
+          emitUpdate(additionalUpdate);
+        }
+      }
       if (update.sessionUpdate === "agent_message_chunk" || update.sessionUpdate === "agent_thought_chunk") {
         const key = streamedAssistantMessageKey(event.raw);
         if (key !== undefined) {

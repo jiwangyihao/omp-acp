@@ -864,18 +864,98 @@ describe("loadOmpSessionHistory", () => {
     ]);
   });
 
-  it("throws for unsupported message roles and skips messages without any text fallback", async () => {
+  it("replays compatible non-chat history roles and skips messages without any text fallback", async () => {
     const agentDir = await tempAgentDir();
-    const unsupportedRolePath = await writeSessionFile(agentDir, "unsupported-role", "role.jsonl", [
+    const compatibleRolePath = await writeSessionFile(agentDir, "compatible-role", "role.jsonl", [
       { type: "session", id: "role", cwd: "/project" },
+      { type: "message", message: { role: "fileMention", files: ["src/index.ts", { path: "docs/readme.md" }], timestamp: "2026-05-10T00:00:00.000Z" } },
+      { type: "message", message: { role: "todo", content: [{ content: "Check input", status: "pending" }, { content: "Run tests", status: "completed" }] } },
       { type: "message", role: "tool", content: "tool output" },
+      { type: "message", role: "providerPayload", content: "do not leak", providerPayload: { apiKey: "secret" } },
+      { type: "message", message: { role: "tool", type: "providerPayload", content: "do not leak tool private type" } },
+      { type: "message", role: "tool", content: "do not leak private flag", private: true },
+      { type: "message", role: "tool", content: "do not leak raw marker", kind: "raw" },
+      { type: "message", role: "unknown", content: "skip unknown text" },
+      { type: "message", role: "fileMention", files: [{ path: "secret.txt", content: "do not leak file content" }] },
     ]);
     const unsupportedContentPath = await writeSessionFile(agentDir, "unsupported-content", "content.jsonl", [
       { type: "session", id: "content", cwd: "/project" },
       { type: "message", role: "user", content: [{ type: "image", url: "file:///image.png" }] },
     ]);
 
-    await assert.rejects(loadOmpSessionHistory(unsupportedRolePath), /Unsupported OMP message role/);
+    assert.deepEqual(await loadOmpSessionHistory(compatibleRolePath), [
+      { sessionUpdate: "agent_thought_chunk", content: { type: "text", text: "[fileMention]\nsrc/index.ts\ndocs/readme.md" } },
+      {
+        sessionUpdate: "plan",
+        entries: [
+          { content: "Check input", priority: "medium", status: "pending" },
+          { content: "Run tests", priority: "medium", status: "completed" },
+        ],
+      },
+      { sessionUpdate: "agent_thought_chunk", content: { type: "text", text: "[tool]\ntool output" } },
+      { sessionUpdate: "agent_thought_chunk", content: { type: "text", text: "[fileMention]\nsecret.txt" } },
+    ]);
     assert.deepEqual(await loadOmpSessionHistory(unsupportedContentPath), []);
+  });
+
+  it("replays todo_write toolResult history as a tool update and ACP plan", async () => {
+    const agentDir = await tempAgentDir();
+    const todoToolPath = await writeSessionFile(agentDir, "todo-tool", "todo-tool.jsonl", [
+      { type: "session", id: "todo-tool", cwd: "/project" },
+      {
+        type: "message",
+        role: "toolResult",
+        toolCallId: "todo-call",
+        toolName: "todo_write",
+        result: { content: [{ type: "text", text: "updated" }], details: { phases: [{ tasks: [{ content: "Track work", status: "in_progress" }] }] } },
+      },
+    ]);
+
+    assert.deepEqual(await loadOmpSessionHistory(todoToolPath), [
+      {
+        sessionUpdate: "tool_call_update",
+        toolCallId: "todo-call",
+        status: "completed",
+        rawOutput: { content: [{ type: "text", text: "updated" }], details: { phases: [{ tasks: [{ content: "Track work", status: "in_progress" }] }] } },
+        content: [{ type: "content", content: { type: "text", text: "updated" } }],
+      },
+      { sessionUpdate: "plan", entries: [{ content: "Track work", priority: "medium", status: "in_progress" }] },
+    ]);
+  });
+
+  it("replays todo_write toolResult message-level details as an empty ACP plan", async () => {
+    const agentDir = await tempAgentDir();
+    const emptyTodoToolPath = await writeSessionFile(agentDir, "empty-todo-tool", "empty-todo-tool.jsonl", [
+      { type: "session", id: "empty-todo-tool", cwd: "/project" },
+      {
+        type: "message",
+        role: "toolResult",
+        toolCallId: "todo-empty-call",
+        toolName: "todo_write",
+        content: "cleared",
+        details: { phases: [] },
+      },
+    ]);
+
+    assert.deepEqual(await loadOmpSessionHistory(emptyTodoToolPath), [
+      {
+        sessionUpdate: "tool_call_update",
+        toolCallId: "todo-empty-call",
+        status: "completed",
+        rawOutput: { content: [{ type: "text", text: "cleared" }] },
+        content: [{ type: "content", content: { type: "text", text: "cleared" } }],
+      },
+      { sessionUpdate: "plan", entries: [] },
+    ]);
+  });
+
+  it("replays empty todo history as an empty ACP plan", async () => {
+    const agentDir = await tempAgentDir();
+    const emptyTodoPath = await writeSessionFile(agentDir, "empty-todo", "empty-todo.jsonl", [
+      { type: "session", id: "empty-todo", cwd: "/project" },
+      { type: "message", role: "todo", content: [] },
+    ]);
+
+    assert.deepEqual(await loadOmpSessionHistory(emptyTodoPath), [{ sessionUpdate: "plan", entries: [] }]);
   });
 });

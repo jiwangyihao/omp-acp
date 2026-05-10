@@ -916,6 +916,69 @@ test("registered host tool call uses registry and sends raw success result", asy
   assert.deepEqual(runtime.sentFrames, [{ type: "host_tool_result", id: "host_2", result: { ok: true, input: { query: "abc" } } }]);
 });
 
+test("todo_write tool result emits ACP plan update before prompt returns", async () => {
+  const { manager, connection, runtime } = await createSession();
+
+  const promptPromise = handleSessionPrompt(promptRequest(), { manager, connection });
+  runtime.emit({
+    type: "event",
+    eventType: "tool_execution_end",
+    raw: {
+      type: "tool_execution_end",
+      toolCallId: "todo_1",
+      toolName: "todo_write",
+      status: "completed",
+      result: { content: [{ type: "text", text: "updated" }], details: { phases: [{ name: "Work", tasks: [{ content: "Fix bug", status: "in_progress" }, { content: "Run tests", status: "completed" }] }] } },
+    },
+  });
+
+  await waitForCondition(() => connection.updates.length === 2);
+  finishRuntimePrompt(runtime, 0);
+  connection.resolveAllUpdates();
+
+  assert.deepEqual(await promptPromise, { stopReason: "end_turn" });
+  assert.deepEqual(connection.updates.map((entry) => entry.update), [
+    {
+      sessionUpdate: "tool_call_update",
+      toolCallId: "todo_1",
+      status: "completed",
+      rawOutput: { content: [{ type: "text", text: "updated" }], details: { phases: [{ name: "Work", tasks: [{ content: "Fix bug", status: "in_progress" }, { content: "Run tests", status: "completed" }] }] } },
+      content: [{ type: "content", content: { type: "text", text: "updated" } }],
+    },
+    {
+      sessionUpdate: "plan",
+      entries: [
+        { content: "Fix bug", priority: "medium", status: "in_progress" },
+        { content: "Run tests", priority: "medium", status: "completed" },
+      ],
+    },
+  ]);
+});
+
+test("todo_write empty result clears ACP plan before prompt returns", async () => {
+  const { manager, connection, runtime } = await createSession();
+
+  const promptPromise = handleSessionPrompt(promptRequest(), { manager, connection });
+  runtime.emit({
+    type: "event",
+    eventType: "tool_execution_end",
+    raw: {
+      type: "tool_execution_end",
+      toolCallId: "todo_empty",
+      toolName: "todo_write",
+      status: "completed",
+      result: { content: [{ type: "text", text: "cleared" }], details: { phases: [] } },
+    },
+  });
+
+  await waitForCondition(() => connection.updates.length === 2);
+  finishRuntimePrompt(runtime, 0);
+  connection.resolveAllUpdates();
+
+  assert.deepEqual(await promptPromise, { stopReason: "end_turn" });
+  assert.deepEqual(connection.updates[1]?.update, { sessionUpdate: "plan", entries: [] });
+});
+
 test("host tool raw frame send failure rejects prompt", async () => {
   const { manager, connection, runtime } = await createSession();
   runtime.nextSendError = new Error("stdin closed");

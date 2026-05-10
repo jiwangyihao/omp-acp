@@ -1,4 +1,5 @@
 import type { SessionUpdate, ToolCallLocation, ToolCallStatus, ToolKind } from "@agentclientprotocol/sdk";
+import { todoPhasesToPlanUpdate } from "./todos.ts";
 import { contentItemsToToolCallContent } from "./content.ts";
 import { isUnsupportedDiffResult, translateDiffPayloadToToolCallContent } from "./diffs.ts";
 import { parseToolInput, sanitizeTextForAcp, sanitizeToolInput, sanitizeToolOutputForAcp } from "./safety.ts";
@@ -102,6 +103,23 @@ export function toolExecutionUpdateToUpdate(raw: Record<string, unknown>): Sessi
 
 export function toolExecutionEndToUpdate(raw: Record<string, unknown>): SessionUpdate {
   return toolExecutionProgressToUpdate(raw, "tool_execution_end");
+}
+
+export function toolExecutionEndToAdditionalUpdates(raw: Record<string, unknown>): SessionUpdate[] {
+  const toolName = typeof raw.toolName === "string" ? raw.toolName : typeof raw.name === "string" ? raw.name : undefined;
+  if (toolName !== "todo_write") {
+    return [];
+  }
+  const outputSource = firstDefinedOutputSource(raw);
+  if (outputSource === undefined || !isRecord(raw[outputSource])) {
+    return [];
+  }
+  const details = (raw[outputSource] as { details?: unknown }).details;
+  if (!isRecord(details)) {
+    return [];
+  }
+  const update = todoPhasesToPlanUpdate(details.phases);
+  return update === undefined ? [] : [update];
 }
 
 function toolExecutionProgressToUpdate(raw: Record<string, unknown>, eventType: "tool_execution_update" | "tool_execution_end"): SessionUpdate {

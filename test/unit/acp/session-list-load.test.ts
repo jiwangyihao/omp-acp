@@ -178,8 +178,8 @@ test("loadSession switches runtime to OMP session path, replays text history, an
   ]);
 });
 
-test("loadSession fails clearly for unknown sessions and unsupported history", async () => {
-  const { agent, agentDir } = await makeAgent();
+test("loadSession fails clearly for unknown sessions", async () => {
+  const { agent, agentDir, updates } = await makeAgent();
   const cwd = join(tmpdir(), "load-fails");
 
   await assert.rejects(
@@ -187,15 +187,15 @@ test("loadSession fails clearly for unknown sessions and unsupported history", a
     /Unknown OMP session: missing/,
   );
 
-  await writeSession(agentDir, cwd, "bad-history", [
-    { type: "session", id: "bad-history", cwd, timestamp: "2026-05-08T01:00:00.000Z" },
-    { type: "message", role: "tool", content: "unsupported" },
+  await writeSession(agentDir, cwd, "tool-history", [
+    { type: "session", id: "tool-history", cwd, timestamp: "2026-05-08T01:00:00.000Z" },
+    { type: "message", role: "tool", content: "tool status" },
   ]);
 
-  await assert.rejects(
-    agent.loadSession({ sessionId: "bad-history", cwd, mcpServers: [] } as LoadSessionRequest),
-    /Unsupported OMP message role/,
-  );
+  await agent.loadSession({ sessionId: "tool-history", cwd, mcpServers: [] } as LoadSessionRequest);
+  assert.deepEqual(updates.slice(-1), [
+    { sessionId: "tool-history", update: { sessionUpdate: "agent_thought_chunk", content: { type: "text", text: "[tool]\ntool status" } } },
+  ]);
 });
 
 test("loadSession does not publish when setup state build fails", async () => {
