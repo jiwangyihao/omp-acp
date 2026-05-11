@@ -78,8 +78,16 @@ function normalizeCreateSessionHooks(hooks?: CreateSessionPublishHooks): CreateS
 export type ActivePrompt = {
   cancellation: PromptCancellation;
   acceptsQueuedPrompt: boolean;
+  replacementRequested: boolean;
+  runtimeTurnCompleted: boolean;
+  runtimeTurnEnding: boolean;
   completion: Promise<ActivePromptOutcome>;
+  completed: boolean;
+  failed: boolean;
   complete: (outcome: ActivePromptOutcome) => void;
+  beginReplacement?: () => void;
+  acceptReplacement?: () => void;
+  rejectReplacement?: () => void;
 };
 
 export type SessionRecord = {
@@ -256,11 +264,17 @@ export class SessionManager {
       cancellation: new PromptCancellation(),
       acceptsQueuedPrompt: true,
       completion,
+      completed: false,
+      replacementRequested: false,
+      failed: false,
+      runtimeTurnCompleted: false,
+      runtimeTurnEnding: false,
       complete: (outcome) => {
         if (completed) {
           return;
         }
         completed = true;
+        activePrompt.completed = true;
         resolveCompletion(outcome);
       },
     };
@@ -281,6 +295,7 @@ export class SessionManager {
   async cancelPrompt(sessionId: string): Promise<void> {
     const session = this.requireSession(sessionId);
     if (session.activePrompt !== undefined) {
+      session.activePrompt.rejectReplacement?.();
       session.activePrompt.acceptsQueuedPrompt = false;
       session.activePrompt.cancellation.cancel();
     }
@@ -317,8 +332,8 @@ export class SessionManager {
     this.#activeForkSources.clear();
 
     for (const session of sessions) {
-      session.activePrompt?.cancellation.cancel();
       session.activePrompt?.complete({ status: "closed" });
+      session.activePrompt?.cancellation.cancel();
       session.activePrompt = undefined;
     }
 

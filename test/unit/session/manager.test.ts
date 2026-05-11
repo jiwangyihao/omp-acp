@@ -425,11 +425,13 @@ test("closeAll cancels active prompts, closes runtimes, and clears sessions", as
   runtimes[1]!.readyDeferred.resolve();
   await secondCreate;
   const active = manager.beginPrompt("session-1");
+  const completion = active.session.activePrompt!.completion;
 
   await manager.closeAll();
   await manager.closeAll();
 
   assert.equal(active.cancellation.isCancelled, true);
+  assert.deepEqual(await completion, { status: "closed" });
   assert.equal(runtimes[0]!.closeCalls, 1);
   assert.equal(runtimes[1]!.closeCalls, 1);
   assert.throws(() => manager.requireSession("session-1"), SessionManagerError);

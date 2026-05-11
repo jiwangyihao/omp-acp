@@ -24,6 +24,11 @@ export type SessionPromptHandlerContext = {
 const CANCELLED_PROMPT_CLEANUP_TIMEOUT_MS = 30_000;
 const RUNTIME_IDLE_POLL_INTERVAL_MS = 1;
 const RUNTIME_IDLE_TIMEOUT_MS = 30_000;
+const BUSY_PROMPT_ERROR_PATTERN = /Agent is already processing|Use steer\(\) or followUp\(\)/i;
+type RuntimeTurnState = {
+  readonly complete: Promise<void>;
+  resolve: () => void;
+};
 
 export async function handleSessionPrompt(
   params: PromptRequest,
@@ -32,30 +37,78 @@ export async function handleSessionPrompt(
   const existingSession = manager.requireSession(params.sessionId);
   const existingPrompt = existingSession.activePrompt;
   if (existingPrompt !== undefined) {
-    if (!existingPrompt.cancellation.isCancelled && !existingPrompt.acceptsQueuedPrompt) {
+    if (existingPrompt.cancellation.isCancelled) {
+      const outcome = await existingPrompt.completion;
+      if (outcome.status === "error") {
+        throw outcome.error;
+      }
+      if (outcome.status === "closed") {
+        throw new SessionManagerError(`Session closed during active prompt: ${params.sessionId}`);
+      }
+      return handleSessionPrompt(params, { manager, connection, hostToolRegistry, cancelledPromptCleanupTimeoutMs });
+    }
+
+    if (existingPrompt.runtimeTurnCompleted || existingPrompt.runtimeTurnEnding) {
+      const outcome = await existingPrompt.completion;
+      if (outcome.status === "error") {
+        throw outcome.error;
+      }
+      if (outcome.status === "closed") {
+        throw new SessionManagerError(`Session closed during active prompt: ${params.sessionId}`);
+      }
+      return handleSessionPrompt(params, { manager, connection, hostToolRegistry, cancelledPromptCleanupTimeoutMs });
+    }
+
+    if (!existingPrompt.acceptsQueuedPrompt) {
       throw new SessionManagerError(`Session already has an active prompt: ${params.sessionId}`);
     }
 
-    const outcome = await existingPrompt.completion;
-    if (outcome.status === "error") {
-      throw outcome.error;
+    const translated = translatePromptToOmpRequest(params);
+    existingPrompt.replacementRequested = true;
+    existingPrompt.acceptsQueuedPrompt = false;
+    existingPrompt.beginReplacement?.();
+    const replacementRequest: Promise<"accepted" | { status: "owner"; outcome: ActivePromptOutcome }> = existingSession.runtime.request("abort_and_prompt", translated.params).then(
+      () => {
+        if (!existingPrompt.cancellation.isCancelled && !existingPrompt.completed && !existingPrompt.failed && existingSession.activePrompt === existingPrompt) {
+          existingPrompt.acceptReplacement?.();
+          return "accepted" as const;
+        }
+        return existingPrompt.completion.then((outcome) => ({ status: "owner" as const, outcome }));
+      },
+      (error) => {
+        existingPrompt.rejectReplacement?.();
+        existingPrompt.replacementRequested = false;
+        if (!existingPrompt.cancellation.isCancelled) {
+          existingPrompt.acceptsQueuedPrompt = true;
+        }
+        throw error;
+      },
+    );
+    const ownerOutcome = existingPrompt.completion.then((outcome) => ({ status: "owner" as const, outcome }));
+    const replacementOutcome = await Promise.race([
+      replacementRequest,
+      existingPrompt.cancellation.cancelled.then(() => ({ status: "cancelled" as const })),
+      ownerOutcome,
+    ]);
+    if (replacementOutcome === "accepted") {
+      return promptResponse(params, "end_turn");
     }
-    if (outcome.status === "closed") {
+    if (replacementOutcome.status === "owner" && replacementOutcome.outcome.status === "error") {
+      throw replacementOutcome.outcome.error;
+    }
+    if (replacementOutcome.status === "owner" && replacementOutcome.outcome.status === "closed") {
       throw new SessionManagerError(`Session closed during active prompt: ${params.sessionId}`);
     }
-    return handleSessionPrompt(params, { manager, connection, hostToolRegistry, cancelledPromptCleanupTimeoutMs });
+    void replacementRequest.catch(() => undefined);
+    return promptResponse(params, "cancelled");
   }
-
   const { session, cancellation, finish } = manager.beginPrompt(params.sessionId);
   const activePrompt = session.activePrompt;
   if (activePrompt === undefined) {
     throw new SessionManagerError(`Session failed to start active prompt: ${params.sessionId}`);
   }
   const updatePromises: Promise<void>[] = [];
-  const promptResponse = (stopReason: PromptResponse["stopReason"]): PromptResponse => ({
-    stopReason,
-    ...(params.messageId !== undefined && params.messageId !== null ? { userMessageId: params.messageId } : {}),
-  });
+  const responseForPrompt = (stopReason: PromptResponse["stopReason"]): PromptResponse => promptResponse(params, stopReason);
   const streamedAssistantMessages = new Set<string>();
   const streamedIndex = {
     has: (key: string) => streamedAssistantMessages.has(key),
@@ -77,12 +130,37 @@ export async function handleSessionPrompt(
   const eventFailure = new Promise<never>((_, reject) => {
     failPrompt = reject;
   });
-  let completeTurn: () => void = () => {};
-  const turnComplete = new Promise<void>((resolve) => {
-    completeTurn = resolve;
-  });
+  let runtimeTurn = createRuntimeTurnState();
+  let replacementPending = false;
+  let ignoredAgentEndDuringReplacement = false;
+  activePrompt.beginReplacement = () => {
+    activePrompt.runtimeTurnCompleted = false;
+    activePrompt.runtimeTurnEnding = false;
+    replacementPending = true;
+    ignoredAgentEndDuringReplacement = false;
+  };
+  activePrompt.acceptReplacement = () => {
+    activePrompt.runtimeTurnCompleted = false;
+    activePrompt.runtimeTurnEnding = false;
+    runtimeTurn.resolve();
+    runtimeTurn = createRuntimeTurnState();
+
+    ignoredAgentEndDuringReplacement = false;
+    activePrompt.replacementRequested = false;
+    replacementPending = false;
+  };
+  activePrompt.rejectReplacement = () => {
+    activePrompt.runtimeTurnCompleted = true;
+    activePrompt.runtimeTurnEnding = false;
+    if (ignoredAgentEndDuringReplacement) {
+      runtimeTurn.resolve();
+    }
+    replacementPending = false;
+    ignoredAgentEndDuringReplacement = false;
+  };
   const rejectActivePrompt = (error: unknown) => {
     if (!cancellation.isCancelled && acceptingEvents) {
+      activePrompt.failed = true;
       acceptingEvents = false;
       activePrompt.acceptsQueuedPrompt = false;
       failPrompt(error);
@@ -119,13 +197,23 @@ export async function handleSessionPrompt(
   });
 
   const unsubscribe = session.runtime.onEvent((event: RuntimeEvent) => {
+    if (event.eventType === "agent_end" && replacementPending) {
+      ignoredAgentEndDuringReplacement = true;
+      return;
+    }
     if (event.eventType === "agent_end") {
+      const observedTurn = runtimeTurn;
       if (!cancellation.isCancelled && acceptingEvents) {
         for (const update of agentEndMessagesToFallbackUpdates(event.raw, streamedIndex)) {
           emitUpdate(update);
         }
       }
-      waitForRuntimeIdle(session.runtime, { eventFailure }).then(completeTurn, rejectActivePrompt);
+      activePrompt.runtimeTurnEnding = true;
+      waitForRuntimeIdle(session.runtime, { eventFailure }).then(() => {
+        activePrompt.runtimeTurnEnding = false;
+        activePrompt.runtimeTurnCompleted = true;
+        observedTurn.resolve();
+      }, rejectActivePrompt);
       return;
     }
 
@@ -196,12 +284,54 @@ export async function handleSessionPrompt(
   });
 
   try {
+
     const translated = translatePromptToOmpRequest(params);
-    const runtimePromise = session.runtime.request(translated.method, translated.params);
+    const startRuntimeRequest = async () => {
+      try {
+        return await session.runtime.request(translated.method, translated.params);
+      } catch (error) {
+        if (translated.method === "prompt" && isBusyPromptError(error)) {
+          activePrompt.replacementRequested = true;
+          activePrompt.acceptsQueuedPrompt = false;
+          activePrompt.beginReplacement?.();
+          try {
+            return await session.runtime.request("abort_and_prompt", translated.params).then((result) => {
+              if (!activePrompt.cancellation.isCancelled) {
+                activePrompt.acceptReplacement?.();
+              }
+              return result;
+            });
+          } catch (abortAndPromptError) {
+            activePrompt.rejectReplacement?.();
+            activePrompt.replacementRequested = false;
+            if (!activePrompt.cancellation.isCancelled) {
+              activePrompt.acceptsQueuedPrompt = true;
+            }
+            throw abortAndPromptError;
+          }
+        }
+        throw error;
+      }
+    };
+    const runtimePromise = startRuntimeRequest();
     // OMP RPC "prompt" responses only acknowledge command acceptance; "agent_end" + runtime idle is the turn completion signal.
-    // Keep ACP activePrompt owned until both have happened so clients cannot send a second prompt into a busy runtime.
-    const promptLifecycle = Promise.all([runtimePromise, turnComplete]).then(() => "runtime" as const);
-    const buildCancelledPromptCleanup = () => Promise.all([runtimePromise.catch(() => undefined), turnComplete, drainUpdatePromises(updatePromises)]);
+    // If OMP reports a stale in-flight turn, abort_and_prompt is the atomic recovery path that replaces it without restarting ACP.
+    const waitForCurrentRuntimeTurn = async (ignoreRuntimeRejection = false) => {
+      for (;;) {
+        const observedTurn = runtimeTurn;
+        if (ignoreRuntimeRejection) {
+          await runtimePromise.catch(() => undefined);
+          await observedTurn.complete;
+        } else {
+          await Promise.all([runtimePromise, observedTurn.complete]);
+        }
+        if (observedTurn === runtimeTurn) {
+          return;
+        }
+      }
+    };
+    const promptLifecycle = waitForCurrentRuntimeTurn().then(() => "runtime" as const);
+    const buildCancelledPromptCleanup = () => waitForCurrentRuntimeTurn(true).then(() => drainUpdatePromises(updatePromises));
 
     const result = await Promise.race([
       promptLifecycle,
@@ -210,6 +340,12 @@ export async function handleSessionPrompt(
     ]);
 
     if (result === "cancelled") {
+      if (activePrompt.replacementRequested) {
+        acceptingEvents = false;
+        unsubscribe();
+        finish({ status: "cancelled" });
+        return responseForPrompt("cancelled");
+      }
       scheduleCancelledPromptCleanup({
         runtimePromise: buildCancelledPromptCleanup(),
         cleanupTimeoutMs: cancelledPromptCleanupTimeoutMs,
@@ -225,10 +361,16 @@ export async function handleSessionPrompt(
           await manager.closeSession(params.sessionId, session.runtime);
         },
       });
-      return promptResponse("cancelled");
+      return responseForPrompt("cancelled");
     }
 
     if (cancellation.isCancelled) {
+      if (activePrompt.replacementRequested) {
+        acceptingEvents = false;
+        unsubscribe();
+        finish({ status: "cancelled" });
+        return responseForPrompt("cancelled");
+      }
       scheduleCancelledPromptCleanup({
         runtimePromise: buildCancelledPromptCleanup(),
         cleanupTimeoutMs: cancelledPromptCleanupTimeoutMs,
@@ -244,7 +386,7 @@ export async function handleSessionPrompt(
           await manager.closeSession(params.sessionId, session.runtime);
         },
       });
-      return promptResponse("cancelled");
+      return responseForPrompt("cancelled");
     }
 
     const drainResult = await Promise.race([
@@ -253,6 +395,12 @@ export async function handleSessionPrompt(
       eventFailure,
     ]);
     if (drainResult === "cancelled") {
+      if (activePrompt.replacementRequested) {
+        acceptingEvents = false;
+        unsubscribe();
+        finish({ status: "cancelled" });
+        return responseForPrompt("cancelled");
+      }
       scheduleCancelledPromptCleanup({
         runtimePromise: buildCancelledPromptCleanup(),
         cleanupTimeoutMs: cancelledPromptCleanupTimeoutMs,
@@ -268,10 +416,12 @@ export async function handleSessionPrompt(
           await manager.closeSession(params.sessionId, session.runtime);
         },
       });
-      return promptResponse("cancelled");
+      return responseForPrompt("cancelled");
     }
     finish({ status: "idle" });
-    return promptResponse("end_turn");
+    acceptingEvents = false;
+    unsubscribe();
+    return responseForPrompt("end_turn");
   } catch (error) {
     finish({ status: "error", error });
     throw error;
@@ -284,6 +434,28 @@ export async function handleSessionPrompt(
       }
     }
   }
+}
+
+function promptResponse(params: PromptRequest, stopReason: PromptResponse["stopReason"]): PromptResponse {
+  return {
+    stopReason,
+    ...(params.messageId !== undefined && params.messageId !== null ? { userMessageId: params.messageId } : {}),
+  };
+}
+
+function createRuntimeTurnState(): RuntimeTurnState {
+  let resolve!: () => void;
+  const complete = new Promise<void>((nextResolve) => {
+    resolve = nextResolve;
+  });
+  return { complete, resolve };
+}
+
+function isBusyPromptError(error: unknown): boolean {
+  if (error instanceof Error) {
+    return BUSY_PROMPT_ERROR_PATTERN.test(error.message);
+  }
+  return BUSY_PROMPT_ERROR_PATTERN.test(String(error));
 }
 
 async function drainUpdatePromises(updatePromises: Promise<void>[]): Promise<void> {

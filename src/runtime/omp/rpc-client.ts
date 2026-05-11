@@ -204,14 +204,19 @@ export class OmpRpcClient implements RuntimeAdapter {
       if (!frame.success) {
         pending.reject(new OmpRpcResponseError(frame.command, frame.error));
       } else {
-        pending.resolve(Object.hasOwn(frame, "data") ? frame.data : undefined);
+        queueMicrotask(() => pending.resolve(Object.hasOwn(frame, "data") ? frame.data : undefined));
       }
       return;
     }
 
-    for (const listener of this.eventListeners) {
-      listener(frame);
-    }
+    const listeners = Array.from(this.eventListeners);
+    queueMicrotask(() => {
+      queueMicrotask(() => {
+        for (const listener of listeners) {
+          listener(frame);
+        }
+      });
+    });
   }
 
   private handleProcessExit(code: number | null, signal: NodeJS.Signals | null): void {
