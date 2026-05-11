@@ -47,6 +47,7 @@
 该脚本先构建 `dist/index.js`，再使用 raw JSON-RPC/NDJSON harness 按 ACP Registry Protocol Matrix 的风格执行：
 
 - 校验当前 truthful capability signal：`loadSession:true`、`sessionCapabilities.list:{}`、`sessionCapabilities.resume:{}`、`sessionCapabilities.fork:{}`，并确认 stop/set_model/set_config_option/set_mode 不作为额外 initialize capability 声明；
+- 校验 Registry-style terminal auth signal：当 `clientCapabilities._meta["terminal-auth"] === true` 时，`initialize.authMethods` 返回 `omp-setup` Terminal Auth；当客户端只声明 `clientCapabilities.terminal === true` 时，默认仍不返回 `authMethods`；
 - `session/new` 基础创建通过，并返回 setup state；
 - `session/list` 与一个预置 OMP JSONL session 的 `session/resume` probe 通过，resume response 仍包含 setup state；
 - `session/fork` probe 成功，fork response 包含 setup state，并确认 fork 后 session 可继续 prompt；
@@ -54,7 +55,7 @@
 - `session/stop` 返回 `method_not_found`，与未声明能力一致；
 - stdout 逐行校验为 JSON-RPC frame，避免 adapter stdout 污染。
 
-这不是直接运行 `agentclientprotocol/registry` CI；当前包没有 registry manifest，也没有实现 ACP auth flow。它用于在本地覆盖 registry matrix 最关键的 capability discovery 与 unsupported-method 边界。
+这不是直接运行 `agentclientprotocol/registry` CI。当前支持的是 Terminal Auth setup/check guide：客户端可以启动 `omp-acp --setup` 来检查并引导本地 OMP 凭据和模型配置，但 adapter 不实现 Agent-managed OAuth，也不收集 provider secret。Registry PR 仍需要在 registry repo 中补齐 manifest schema、icon 规范和官方 auth checker 验证。
 
 ## ACP Registry / Protocol Matrix
 
@@ -66,7 +67,7 @@
 
 Registry 的 auth checker 还会检查 `authMethods`，并明确要求 agent 不得向 stdout 写入非 ACP JSON-RPC 内容。
 
-当前 `omp-acp` 已发布为 npm 包，但仍没有实现 ACP auth flow，也没有 registry manifest，因此不把 Registry CI 作为当前发布门禁。若未来准备 registry 入口，必须先单独设计并实现 truthful auth 能力，再用 registry manifest 和官方 CI 验证。
+当前 `omp-acp` 已发布为 npm 包，并支持 truthful Terminal Auth setup/check guide，但仍没有 registry manifest，也没有实现 Agent-managed OAuth。准备 Registry 入口时，必须在 registry fork 中补齐 manifest 和 icon，并运行官方 schema、icon 与 auth checker；PR 合并前不得声称已进入官方 ACP Registry。
 
 ## `openclaw/acpx` conformance draft
 

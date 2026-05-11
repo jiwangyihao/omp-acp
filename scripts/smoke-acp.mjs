@@ -31,6 +31,26 @@ try {
   assert.equal(typeof initialize.result?.agentCapabilities?.sessionCapabilities?.resume, "object");
   assert.equal(typeof initialize.result?.agentCapabilities?.sessionCapabilities?.fork, "object");
   assert.equal(initialize.result?.agentCapabilities?.sessionCapabilities?.close, undefined);
+  assert.equal(initialize.result?.authMethods, undefined);
+
+  acp.send({
+    jsonrpc: "2.0",
+    id: 10,
+    method: "initialize",
+    params: {
+      protocolVersion: 1,
+      clientCapabilities: {
+        terminal: true,
+        fs: { readTextFile: true, writeTextFile: true },
+        _meta: { "terminal-auth": true },
+      },
+    },
+  });
+  const registryInitialize = await acp.nextResponse(10);
+  assert.equal(registryInitialize.error, undefined);
+  assert.equal(registryInitialize.result?.authMethods?.[0]?.type, "terminal");
+  assert.equal(registryInitialize.result?.authMethods?.[0]?.id, "omp-setup");
+  assert.deepEqual(registryInitialize.result?.authMethods?.[0]?.args, ["--setup"]);
 
   acp.send({ jsonrpc: "2.0", id: 2, method: "session/new", params: { cwd: repoRoot, mcpServers: [] } });
   const sessionNew = await acp.nextResponse(2);

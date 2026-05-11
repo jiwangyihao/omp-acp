@@ -73,6 +73,26 @@ Development entry point:
 node --import tsx src/index.ts
 ```
 
+## Authentication setup
+
+`omp-acp` does not collect provider API keys. It uses the local OMP configuration that the `omp` CLI already uses.
+
+For clients or Registry checks that explicitly support ACP Terminal Auth setup, the adapter advertises one terminal setup method:
+
+```bash
+npx -y omp-acp --setup
+```
+
+For a local checkout, run the same setup flow through the built output:
+
+```bash
+node dist/index.js --setup
+```
+
+The setup command checks that OMP can start in RPC mode and that OMP can discover at least one usable model. If no model is available, it prints configuration guidance such as setting provider environment variables (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`) or creating/editing `~/.omp/agent/models.yml`.
+
+The setup flow is a check and guide only. It does not complete provider login for you, ask for provider secrets, store provider secrets, print provider secrets, or manage an OAuth callback flow.
+
 ## Zed / ZedG setup
 
 Add a custom agent server to Zed `settings.json`:
@@ -151,6 +171,8 @@ Use `OMP_ACP_RUNTIME_ARGS_JSON` only for fixtures, smoke tests, or unusual debug
 Supported:
 
 - `initialize`
+- `authMethods` Terminal Auth when the client explicitly supports ACP auth setup
+- `authenticate` for the `omp-setup` Terminal Auth method
 - `session/new`
 - `session/prompt`
 - `session/cancel`
@@ -178,6 +200,7 @@ Unsupported or undeclared:
 - OMP `select`, `input`, and `editor`
 - Broad Ask / elicitation flows
 - OMP-specific runtime knobs as ACP config options: steering, follow-up, interrupt, auto compaction, sampling, provider config, base URL, secrets, and tool/MCP toggles
+- Agent-managed OAuth Auth is not implemented; Terminal Auth is a setup/check guide, not an OAuth callback flow.
 - Message-bound fork or `_meta.messageId` / `_meta.messageID` fork
 
 ## Prompt, concurrency, and cancellation semantics
@@ -288,6 +311,7 @@ Manual Zed / ZedG GUI smoke is still a local/manual gate. Release notes do not c
 - 默认禁用 OMP 的通用 `ask` 工具，但不使用静态 `--tools` 白名单，因此不会屏蔽用户设置、插件、扩展、MCP 或未来工具发现。
 - 支持 prompt streaming、tool updates、session list/load/resume/fork、模型和 thinking 控制、OMP `confirm` permission、`setWidget` 进度展示，以及 `todo_write` → ACP `plan` 同步。
 - 暂不声明 MCP passthrough、filesystem delegation、terminal delegation、`session/close`、广义 Ask / elicitation 或 OMP-specific runtime knobs。
+- `omp-acp --setup` 只检查并引导 OMP 本地模型认证配置，不收集、不保存、不打印 provider API key。
 - v0.1.1 修复了 Zed 下一条消息撞上 OMP busy runtime 的竞态，并修复了 OMP 历史 `fileMention` 导致的加载失败。
 
 最小 Zed 配置：

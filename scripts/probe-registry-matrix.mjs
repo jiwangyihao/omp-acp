@@ -52,7 +52,21 @@ try {
     setConfigOption: false,
     setMode: false,
   });
-  assert.deepEqual(authTypes(initResult.authMethods), []);
+  assert.deepEqual(authTypes(initResult.authMethods), ["terminal"]);
+
+  const terminalOnlyAcp = startAcpSubprocess(agentDir);
+  try {
+    const terminalOnlyInitialize = await terminalOnlyAcp.request("initialize", {
+      protocolVersion: 1,
+      clientInfo: { name: "ACP Registry terminal-only negative", version: "0.1.0" },
+      clientCapabilities: { terminal: true },
+    });
+    assert.equal(terminalOnlyInitialize.outcome.status, "success");
+    assert.deepEqual(authTypes(terminalOnlyInitialize.message.result.authMethods), []);
+    assert.equal(terminalOnlyAcp.stderr, "");
+  } finally {
+    await terminalOnlyAcp.close().catch(() => {});
+  }
 
   const sessionNew = await acp.request("session/new", { cwd: repoRoot, mcpServers: [] });
   assert.equal(sessionNew.outcome.status, "success");
@@ -109,7 +123,7 @@ try {
 
   const summary = {
     initialize: initialize.outcome.status,
-    authMethods: [],
+    authMethods: authTypes(initResult.authMethods),
     sessionNew: sessionNew.outcome.status,
     capabilities,
     resumeSessionPath,

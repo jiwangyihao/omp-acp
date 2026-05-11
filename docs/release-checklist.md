@@ -33,6 +33,8 @@
 - [ ] 运行 `npm run smoke:omp-rpc-controls:required`，确认发布机器真实 OMP RPC controls smoke 通过；顶层 skip、timeout、failure、`dumpTools` 不可用，或 `ask` 存在但无法验证移除/恢复，均为发布门禁失败；active tools 已不含 `ask` 时记录 `set_active_tools.skipped` 并视为通过。
 - [ ] 如需开发机诊断，可运行 `npm run smoke:omp-rpc-controls:optional`；optional smoke 可 skip，不是发布通过条件。
 - [ ] 运行 `npm run validate:registry`，确认 Registry-style capability discovery、session controls probes 与 unsupported-method 边界通过。
+- [ ] 运行 `npx -y omp-acp@<version> --setup` 或本地 `node dist/index.js --setup`，确认 setup flow 不打印 secret，并记录退出码；如果当前机器无真实 OMP 或无模型，必须如实记录，不得把它当成真实 OMP 认证通过。
+- [ ] 对 Registry-ready release，确认 `initialize` 在 Registry-style `_meta["terminal-auth"]` 下返回 Terminal Auth，且默认客户端不返回 `authMethods`。
 - [ ] 运行 `npm run validate:acpx`，确认 acpx draft assessment 无 unexpected failure，并复核 expected draft failures 是否仍与能力矩阵一致。
 - [ ] 如需一次性执行除 Zed 外的自动化门禁，运行 `npm run validate:standard`；该命令必须使用 required real OMP gate。
 - [ ] 记录真实 `omp --mode rpc` controls smoke 的版本、PATH 和结果；如果本机 required gate 失败，不得声称发布验证通过。

@@ -207,6 +207,27 @@ async function withAcpSubprocess<T>(run: (acp: RunningAcp) => Promise<T>): Promi
   }
 }
 
+async function runSubprocess(args: readonly string[]): Promise<{ code: number | null; signal: NodeJS.Signals | null; stdout: string; stderr: string }> {
+  const child = spawn(process.execPath, [...subprocessArgs, ...args], {
+    cwd: repoRoot,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+
+  let stdout = "";
+  let stderr = "";
+  child.stdout.setEncoding("utf8");
+  child.stderr.setEncoding("utf8");
+  child.stdout.on("data", (chunk: string) => {
+    stdout += chunk;
+  });
+  child.stderr.on("data", (chunk: string) => {
+    stderr += chunk;
+  });
+
+  const [code, signal] = await once(child, "close") as [number | null, NodeJS.Signals | null];
+  return { code, signal, stdout, stderr };
+}
+
 function initializeRequest(id: number) {
   return {
     jsonrpc: "2.0",
@@ -268,20 +289,33 @@ test("unknown methods return JSON-RPC method-not-found errors", async () => {
   });
 });
 
-test("authenticate returns JSON-RPC method-not-found over stdio", async () => {
+test("authenticate accepts setup method and rejects unknown methods over stdio", async () => {
   await withAcpSubprocess(async (acp) => {
     acp.send({
       jsonrpc: "2.0",
       id: 5,
       method: "authenticate",
-      params: { methodId: "none" },
+      params: { methodId: "omp-setup" },
     });
 
-    const response = await acp.nextResponse();
+    const setupResponse = await acp.nextResponse();
 
-    assert.equal(response.id, 5);
-    assert.equal(response.result, undefined);
-    assert.equal(typeof response.error?.code, "number");
+    assert.equal(setupResponse.id, 5);
+    assert.deepEqual(setupResponse.result, {});
+    assert.equal(setupResponse.error, undefined);
+
+    acp.send({
+      jsonrpc: "2.0",
+      id: 6,
+      method: "authenticate",
+      params: { methodId: "unknown" },
+    });
+
+    const unknownResponse = await acp.nextResponse();
+
+    assert.equal(unknownResponse.id, 6);
+    assert.equal(unknownResponse.result, undefined);
+    assert.equal(typeof unknownResponse.error?.code, "number");
   });
 });
 
@@ -298,4 +332,55 @@ test("malformed JSON does not pollute stdout and connection still handles initia
     assert.notEqual(response.result, null);
     assert.equal((response.result as { protocolVersion?: number }).protocolVersion, 1);
   });
+});
+
+test("Registry-style initialize advertises terminal setup auth over stdio", async () => {
+  await withAcpSubprocess(async (acp) => {
+    acp.send({
+      jsonrpc: "2.0",
+      id: 7,
+      method: "initialize",
+      params: {
+        protocolVersion: 1,
+        clientCapabilities: {
+          terminal: true,
+          fs: { readTextFile: true, writeTextFile: true },
+          _meta: { "terminal-auth": true },
+        },
+      },
+    });
+
+    const response = await acp.nextResponse();
+
+    assert.equal(response.id, 7);
+    assert.equal(response.error, undefined);
+    assert.equal(typeof response.result, "object");
+    assert.notEqual(response.result, null);
+
+    const result = response.result as {
+      authMethods?: Array<{ id?: string; type?: string; args?: string[] }>;
+    };
+    assert.equal(result.authMethods?.[0]?.id, "omp-setup");
+    assert.equal(result.authMethods?.[0]?.type, "terminal");
+    assert.deepEqual(result.authMethods?.[0]?.args, ["--setup"]);
+    assert.equal(acp.stderr, "");
+  });
+});
+
+test("help and version exit without starting the ACP stdio server", async () => {
+  const help = await runSubprocess(["--help"]);
+
+  assert.equal(help.code, 0);
+  assert.equal(help.signal, null);
+  assert.match(help.stdout, /Usage: omp-acp/);
+  assert.equal(help.stderr, "");
+  assert.throws(() => JSON.parse(help.stdout));
+
+  const version = await runSubprocess(["--version"]);
+
+  assert.equal(version.code, 0);
+  assert.equal(version.signal, null);
+  assert.match(version.stdout, /^\d+\.\d+\.\d+/);
+  assert.equal(version.stderr, "");
+  assert.throws(() => JSON.parse(version.stdout));
 });

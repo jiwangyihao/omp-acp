@@ -56,6 +56,47 @@ test("handleInitialize returns protocol version, agent info, and capabilities wi
   assert.equal(Object.hasOwn(response, "authMethods"), false);
 });
 
+test("handleInitialize advertises terminal auth for SDK auth capability", async () => {
+  const response = await handleInitialize({
+    protocolVersion: PROTOCOL_VERSION,
+    clientCapabilities: { auth: { terminal: true } },
+  });
+
+  assert.deepEqual(response.authMethods, [
+    {
+      id: "omp-setup",
+      type: "terminal",
+      name: "Set up Oh My Pi",
+      description: "Open an interactive terminal guide to configure Oh My Pi credentials and models.",
+      args: ["--setup"],
+    },
+  ]);
+});
+
+test("handleInitialize advertises terminal auth for Registry meta capability", async () => {
+  const response = await handleInitialize({
+    protocolVersion: PROTOCOL_VERSION,
+    clientCapabilities: { terminal: true, _meta: { "terminal-auth": true } },
+  });
+
+  assert.deepEqual(response.authMethods?.[0], {
+    id: "omp-setup",
+    type: "terminal",
+    name: "Set up Oh My Pi",
+    description: "Open an interactive terminal guide to configure Oh My Pi credentials and models.",
+    args: ["--setup"],
+  });
+});
+
+test("handleInitialize does not treat terminal request support as terminal auth support", async () => {
+  const response = await handleInitialize({
+    protocolVersion: PROTOCOL_VERSION,
+    clientCapabilities: { terminal: true },
+  });
+
+  assert.equal(response.authMethods, undefined);
+});
+
 test("handleInitialize does not declare unimplemented capabilities as true", async () => {
   const response = await handleInitialize({
     protocolVersion: PROTOCOL_VERSION,

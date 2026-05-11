@@ -43,6 +43,23 @@ try {
   assert.equal(initialize.agentCapabilities?.sessionCapabilities?.close, undefined);
   assert.equal(initialize.authMethods, undefined);
 
+  const terminalAuthUpdates = [];
+  const terminalAuthAcp = startSdkClient(agentDir, terminalAuthUpdates);
+  try {
+    const terminalAuthInitialize = await terminalAuthAcp.request("initialize terminal auth", () => terminalAuthAcp.connection.initialize({
+      protocolVersion: PROTOCOL_VERSION,
+      clientInfo: { name: "omp-acp SDK smoke", version: "1.0.0" },
+      clientCapabilities: { auth: { terminal: true } },
+    }));
+    assert.equal(terminalAuthInitialize.authMethods?.[0]?.id, "omp-setup");
+    assert.equal(terminalAuthInitialize.authMethods?.[0]?.type, "terminal");
+    assert.deepEqual(terminalAuthInitialize.authMethods?.[0]?.args, ["--setup"]);
+    assert.equal(terminalAuthUpdates.length, 0);
+  } finally {
+    await terminalAuthAcp.close();
+  }
+  assert.equal(terminalAuthAcp.stderr, "");
+
   const sessionFile = await writeSmokeSession(agentDir, repoRoot, "sdk-smoke-session", [
     { type: "session", id: "sdk-smoke-session", cwd: repoRoot, timestamp: "2026-05-08T01:00:00.000Z", title: "SDK Smoke" },
     { type: "message", role: "user", content: "past question", timestamp: "2026-05-08T01:01:00.000Z" },

@@ -2,7 +2,6 @@ import {
   AgentSideConnection,
   RequestError,
   type Agent,
-  type AuthenticateRequest,
   type CancelNotification,
   type ForkSessionRequest,
   type LoadSessionRequest,
@@ -15,6 +14,7 @@ import {
   type SetSessionModelRequest,
   type Stream,
 } from "@agentclientprotocol/sdk";
+import { handleAuthenticate } from "./handlers/authenticate.ts";
 import { handleInitialize } from "./handlers/initialize.ts";
 import { startOmpRpcClient } from "../runtime/omp/rpc-client.ts";
 import { SessionManager, SessionManagerError, type RuntimeFactory } from "../session/manager.ts";
@@ -89,8 +89,8 @@ export function createOmpAcpAgent(
       return handleSetSessionConfigOption(params, manager, connection);
     },
 
-    async authenticate(_params: AuthenticateRequest) {
-      throw RequestError.methodNotFound("authenticate");
+    async authenticate(params) {
+      return handleAuthenticate(params);
     },
 
     async prompt(params: PromptRequest) {
