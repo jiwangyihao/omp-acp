@@ -25,8 +25,6 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Use latest npm for trusted publishing
-        run: npm install -g npm@latest
 
       - name: Verify release tag matches package version
         run: |
