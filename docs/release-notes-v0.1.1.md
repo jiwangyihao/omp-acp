@@ -1,43 +1,77 @@
 # omp-acp v0.1.1
 
-补丁版本，聚焦 Zed/ZedG 可用性与历史回放稳定性。
+Patch release focused on Zed/ZedG usability, prompt lifecycle correctness, safer OMP history replay, and TODO plan synchronization.
 
-## 重点
+## Highlights
 
-- 修复 ACP prompt 生命周期竞态：OMP `prompt` RPC ACK 不再被当作 turn 完成，adapter 会等待 `agent_end` 和 runtime idle 后再返回 `end_turn`，避免下一条 prompt 打入仍 busy 的 OMP runtime。
-- 补齐 ACP `messageId` 回显语义：`PromptRequest.messageId` 会作为 `PromptResponse.userMessageId` 回显，但不参与调度、队列或中断语义。
-- 修复 OMP 历史 `fileMention` 等非聊天角色导致的 loadSession 回放失败；只回放安全路径信息，不暴露文件内容或 provider-private/raw/internal 内容。
-- 新增 OMP `todo_write` → ACP `plan` 同步，实时工具结果和历史 `toolResult` 都会同步任务状态；空 TODO 会发送 `entries: []` 清空客户端旧计划。
-- 保持 OMP `ask` 工具禁用边界，同时不使用静态 `--tools` allowlist，保留 OMP 设置、插件、扩展、MCP 和未来工具发现行为。
+- Fixed the ACP prompt lifecycle race that could make Zed believe generation had ended while OMP was still cleaning up the turn.
+  - OMP RPC `prompt` responses are treated as command-acceptance ACKs only.
+  - ACP `session/prompt` now waits for OMP `agent_end` plus runtime idle state before returning `stopReason: "end_turn"`.
+  - Ordinary concurrent ACP prompts are held until the active OMP turn has fully cleaned up, then sent as independent new OMP prompts.
+  - Cancelled prompts also wait for bounded runtime cleanup before the next prompt is allowed through.
+- Added ACP `messageId` echo support.
+  - `PromptRequest.messageId` is returned as `PromptResponse.userMessageId` for normal and cancelled prompts.
+  - `messageId` is explicitly not used for prompt scheduling, queueing, or interrupt semantics.
+- Fixed real OMP history replay for non-chat roles such as `fileMention`.
+  - `fileMention` history no longer fails `session/load` with `Unsupported OMP message role`.
+  - Only safe file path/URI/name information is replayed; file contents and provider-private/raw/internal fields are skipped.
+  - Unknown or unsafe history blocks are skipped or sanitized instead of breaking the entire load operation.
+- Added OMP TODO state synchronization.
+  - Runtime `todo_write` results emit ACP `plan` updates.
+  - Historical `todo_write` tool results replay as ACP `plan` updates.
+  - Empty TODO state emits `entries: []`, allowing clients to clear stale plans.
+- Preserved the OMP `ask` disablement boundary without a static `--tools` allowlist.
+  - Default runtime launch still injects the adapter extension to remove only broad `ask`.
+  - Session setup also removes active `ask` from `dumpTools` when available.
+  - OMP settings-derived tools, extension/plugin tools, MCP tools, and future tool discovery remain available.
+- Hardened release automation.
+  - Removed the GitHub runner npm self-upgrade step that could corrupt the runner npm install.
+  - Switched the release workflow to Node 24 with `actions/setup-node@v6` for the npm Trusted Publishing path.
 
-## 能力边界
+## Capability boundary
 
-- ACP SDK 固定为 `@agentclientprotocol/sdk@0.21.0`。
-- 普通并发 ACP `session/prompt` 由 adapter 内部排队，在前一个 prompt 清理完成后作为新的独立 OMP `prompt` 发送；不映射为 OMP `follow_up`。
-- ACP 0.21.0 没有标准的 follow-up、queue、steer 或「中断并替换 prompt」原语；客户端可用 `session/cancel` + 下一次 `session/prompt` 近似中断。
-- `confirm` 仍映射为 ACP `session/request_permission`；`setWidget` 显示为 thought/progress 文本；`select`、`input`、`editor` 和广义 elicitation 仍未声明支持。
-- 本版本不声明官方 ACP full conformance。`openclaw/acpx` 是第三方 draft assessment，不是官方完整一致性证明。
-- Zed/ZedG GUI 手工 smoke 仍需用户本地执行；自动发布门禁不声称 GUI 手工验证已完成。
+- ACP SDK remains pinned to `@agentclientprotocol/sdk@0.21.0`.
+- ACP 0.21.0 has no standard follow-up, queue, steer, or single-step interrupt-and-replace prompt primitive.
+  - Clients can approximate interruption with `session/cancel` followed by a new `session/prompt`.
+  - Ordinary concurrent ACP prompts are adapter-queued and sent as independent OMP prompts; they are not mapped to OMP `follow_up`.
+- OMP `confirm` remains the only interactive request bridged to ACP `session/request_permission`.
+- OMP `setWidget` is displayed as ACP thought/progress text.
+- OMP `select`, `input`, `editor`, and broad Ask/elicitation flows remain unsupported and undeclared.
+- OMP-specific runtime knobs are still hidden from ACP `configOptions`: steering mode, follow-up mode, interrupt mode, auto compaction, sampling controls, provider config, base URLs, secrets, and tool/MCP toggles.
+- This release does not claim official ACP full conformance. `openclaw/acpx` is a third-party draft assessment, not an official conformance suite or full-pass claim.
+- Zed/ZedG GUI smoke remains a manual/local gate and is not claimed as completed by the automated release workflow.
 
-## 发布门禁
+## Verification
 
-本地发布前已重新验证：
+Local release verification included:
 
-- `npm run check`
-- `npm run build`
-- `npm run smoke:omp-rpc-controls:required`
-- `git diff --check`
-- 多轮只读代码审查
-
-GitHub Release workflow 会在发布时继续运行：
-
-- `npm run check`
-- `npm run smoke:acp`
-- `npm run smoke:sdk-client`
-- `npm run validate:registry`
-- `npm run validate:acpx`
+- `npm run validate:standard`
+  - `npm run check`
+  - `npm run smoke:acp`
+  - `npm run smoke:sdk-client`
+  - `npm run smoke:omp-rpc-controls:required`
+  - `npm run validate:registry`
+  - `npm run validate:acpx`
 - `npm pack --dry-run --json`
+- `git diff --check`
+- Read-only review passes for the prompt lifecycle, history replay, TODO plan synchronization, and release/readme changes.
 
-## 升级提示
+GitHub Release workflow for `v0.1.1` completed successfully and published `omp-acp@0.1.1` to npm through Trusted Publishing.
 
-Zed / ZedG 中已运行的 `omp-acp-local` agent/session 不会热加载新的 `dist/index.js` 或 npm 包版本。升级后请重启或 reload 对应 agent/session。
+## Upgrade notes
+
+Existing Zed / ZedG `omp-acp` agent processes do not hot-reload a new `dist/index.js` or npm package version. After upgrading, restart or reload the configured agent/session.
+
+If you previously configured a local checkout, rebuild it with `npm run build` and make sure Zed points to the rebuilt `dist/index.js`.
+
+## 中文摘要
+
+本版本主要修复 Zed / ZedG 可用性问题：
+
+- 修复 prompt 生命周期竞态，避免 Zed 认为生成结束后下一条消息打到仍 busy 的 OMP runtime。
+- 修复 `fileMention` 等 OMP 历史消息导致 `session/load` 失败的问题。
+- 新增 `todo_write` 到 ACP `plan` 的实时与历史同步。
+- 保持禁用 OMP 通用 `ask`，但不使用静态 `--tools` 白名单。
+- 修复并加固 npm Trusted Publishing 发布 workflow。
+
+升级后请重启或 reload Zed / ZedG 中的 `omp-acp` agent/session。

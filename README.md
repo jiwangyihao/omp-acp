@@ -6,56 +6,58 @@
 
 Use [Oh My Pi](https://github.com/jiwangyihao/oh-my-pi) from [Agent Client Protocol](https://agentclientprotocol.com/) compatible clients such as [Zed](https://zed.dev).
 
-`omp-acp` 是一个独立的 OMP-native ACP adapter。它通过 stdio 对外说 ACP，通过 `omp --mode rpc` 对内驱动 OMP，让支持 ACP 的编辑器可以把 OMP 作为外部 coding agent 使用。
+`omp-acp` is an independent OMP-native ACP adapter. It speaks ACP JSON-RPC over stdio to editors, launches `omp --mode rpc` as the runtime, and translates OMP RPC JSONL events into ACP session updates.
 
-## 这是什么
+> 中文说明见下方 [中文概览](#中文概览)。
 
-- **ACP adapter，而不是 OpenAI-compatible 端点。** OpenAI-compatible API 不能直接接入 Zed ACP；`omp-acp` 负责把 ACP JSON-RPC 与 OMP RPC JSONL 互相转换。
-- **独立实现，而不是 `pi-acp` 的长期 fork。** `pi-acp`、OpenCode ACP 和其他 ACP adapter 只是行为与测试参考。
-- **能力声明保守。** `initialize` 只声明已经实现并测试过的 ACP 能力；未实现能力不会为了兼容 UI 而伪装支持。
-- **默认适配真实 OMP。** 默认 runtime 命令由 adapter 构造为 OMP RPC 模式，并注入一个小扩展来移除通用 `ask` 工具，避免当前 ACP 客户端无法回答的泛化交互请求挂住会话。
+## What this is
 
-## 功能概览
+- **An ACP adapter, not an OpenAI-compatible endpoint.** Zed ACP clients do not talk to OpenAI-compatible APIs directly; this adapter bridges ACP and OMP RPC.
+- **An independent adapter, not a long-lived `pi-acp` fork.** `pi-acp`, OpenCode ACP, and other ACP adapters are useful references, but OMP behavior and tested ACP contracts are the source of truth here.
+- **Truthful capability declaration.** `initialize` only declares capabilities implemented and covered by tests. Unsupported features fail clearly instead of being advertised optimistically.
+- **Real OMP by default.** The default runtime command is OMP RPC mode. The adapter injects a small extension that removes only OMP's broad `ask` tool, avoiding generic interactive prompts that current ACP clients cannot answer while preserving the rest of OMP's tool discovery.
 
-| 能力 | 状态 | 说明 |
+## Features
+
+| Area | Status | Notes |
 |---|---|---|
-| ACP stdio transport | 已实现 | stdout 只输出 ACP JSON-RPC frame；诊断走 stderr。 |
-| `session/new` / `session/prompt` / `session/cancel` | 已实现 | 支持文本、图片、resource link 与 embedded resource context。 |
-| Assistant streaming | 已实现 | 支持真实 OMP `text_delta` / `thinking_delta`，并用 `agent_end.messages` 做去重 fallback。 |
-| Prompt 生命周期 | 已实现 | OMP `prompt` ACK 只作为接收确认；adapter 等待 `agent_end` + runtime idle 后才返回 ACP `end_turn`。 |
-| Tool call / update / diff | 已实现 | 工具事件、失败/取消状态、结构化 diff 与 host-tool result 都会转换为 ACP update。 |
-| `session/list` / `session/load` / `session/resume` | 已实现 | 读取 OMP JSONL session，并安全回放可渲染历史。 |
-| `session/fork` | 已实现（第一阶段） | 从源 OMP session 当前持久化 head fork；不支持 message-bound fork。 |
-| Model / thinking / default mode controls | 已实现 | 来自 OMP `get_state` / `get_available_models`；thinking 选项按当前模型 metadata 动态裁剪。 |
-| OMP `confirm` | 部分实现 | 映射到 ACP `session/request_permission`。 |
-| OMP `setWidget` | 已实现 | `widgetLines` 显示为 ACP thought/progress 文本。 |
-| OMP TODO 状态 | 已实现 | `todo_write` 同步为 ACP `plan`；空 TODO 会清空客户端旧计划。 |
-| MCP passthrough / terminal delegation / filesystem delegation | 未实现 | 不在 ACP capability 中声明。 |
+| ACP stdio transport | Implemented | stdout is reserved for ACP JSON-RPC frames; diagnostics go to stderr. |
+| `session/new`, `session/prompt`, `session/cancel` | Implemented | Text, image, resource link, and embedded resource context are supported. |
+| Assistant streaming | Implemented | Real OMP `text_delta` and `thinking_delta` stream as ACP message/thought chunks; `agent_end.messages` is a de-duplicated fallback. |
+| Prompt lifecycle | Implemented | OMP `prompt` ACK is treated as command acceptance only; ACP `end_turn` waits for `agent_end` plus runtime idle. |
+| Tool calls, updates, and diffs | Implemented | Runtime tool events, failures, cancellations, structured diffs, and host-tool results are surfaced as ACP updates. |
+| Session list/load/resume | Implemented | Reads OMP JSONL session history and safely replays renderable content. |
+| Session fork | Implemented, first phase | Forks from the source OMP session's persisted head; message-bound fork is not supported. |
+| Model/thinking/default mode controls | Implemented | Built from OMP `get_state` / `get_available_models`; thinking choices are clipped to current model metadata. |
+| OMP `confirm` | Partial | Bridged to ACP `session/request_permission`. |
+| OMP `setWidget` | Implemented | `widgetLines` are shown as ACP thought/progress text. |
+| OMP TODO state | Implemented | `todo_write` emits ACP `plan`; empty TODO state clears the client's old plan. |
+| MCP passthrough, terminal delegation, filesystem delegation | Not implemented | Not declared in ACP capabilities. |
 
-完整、逐项可追溯的状态见 [能力矩阵](./docs/compatibility/capability-matrix.md)。
+See the full [capability matrix](./docs/compatibility/capability-matrix.md) for the exact tested boundary.
 
-## 安装
+## Installation
 
-### 前置条件
+### Prerequisites
 
-- Node.js >= 20。
-- 已安装 `omp` CLI，并且 Zed 启动时继承的 PATH 能找到它；如果找不到，请用 `OMP_ACP_RUNTIME_COMMAND` 指定绝对路径。
-- 一个支持 ACP external agent 的客户端，例如 Zed / ZedG。
+- Node.js >= 20.
+- The `omp` CLI installed and visible to the PATH inherited by your editor. If not, set `OMP_ACP_RUNTIME_COMMAND` to the absolute executable path.
+- An ACP-compatible client such as Zed / ZedG.
 
-### 通过 npm 使用
+### npm
 
 ```bash
 npx -y omp-acp
 ```
 
-也可以全局安装：
+Or install globally:
 
 ```bash
 npm install -g omp-acp
 omp-acp
 ```
 
-### 从源码运行
+### From source
 
 ```bash
 git clone https://github.com/jiwangyihao/omp-acp.git
@@ -65,15 +67,15 @@ npm run build
 node dist/index.js
 ```
 
-开发模式：
+Development entry point:
 
 ```bash
 node --import tsx src/index.ts
 ```
 
-## Zed / ZedG 配置
+## Zed / ZedG setup
 
-在 Zed `settings.json` 中添加自定义 agent：
+Add a custom agent server to Zed `settings.json`:
 
 ```json
 {
@@ -88,7 +90,7 @@ node --import tsx src/index.ts
 }
 ```
 
-如果 Zed 找不到 `omp`，只覆盖 OMP 可执行文件路径：
+If Zed cannot find `omp`, override only the OMP executable:
 
 ```json
 {
@@ -105,7 +107,7 @@ node --import tsx src/index.ts
 }
 ```
 
-本地 checkout 开发配置：
+For local checkout development:
 
 ```json
 {
@@ -122,31 +124,31 @@ node --import tsx src/index.ts
 }
 ```
 
-启动后，在 Zed Agent Panel 中创建外部 agent thread，选择 `omp-acp` 或你配置的名称。
+Then open the Zed Agent Panel, start a new external agent thread, and select the configured `omp-acp` agent.
 
-更多 Zed / ZedG 说明见 [Zed 兼容文档](./docs/compatibility/zed.md)。
+More editor notes are in [Zed compatibility notes](./docs/compatibility/zed.md).
 
-## Runtime 配置
+## Runtime configuration
 
-| 环境变量 | 用途 |
+| Variable | Purpose |
 |---|---|
-| `OMP_ACP_RUNTIME_COMMAND` | 只覆盖 OMP 可执行文件。adapter 仍会自动提供默认 RPC 参数。 |
-| `OMP_ACP_RUNTIME_ARGS_JSON` | 高级/测试用：完整替换 runtime argv。传入后参数按原样使用。 |
-| `OMP_ACP_AGENT_DIR` | 测试或隔离调试用：覆盖 OMP agent directory。 |
+| `OMP_ACP_RUNTIME_COMMAND` | Overrides only the OMP executable. The adapter still supplies default RPC arguments. |
+| `OMP_ACP_RUNTIME_ARGS_JSON` | Advanced/test-only complete runtime argv override. Arguments are used as-is. |
+| `OMP_ACP_AGENT_DIR` | Test/isolation override for the OMP agent directory. |
 
-默认情况下，adapter 会自行构造 OMP runtime：
+By default the adapter constructs this runtime shape:
 
 ```bash
 omp --mode rpc --extension <adapter-disable-ask-extension.mjs>
 ```
 
-不要为了禁用 `ask` 写静态 `--tools` 白名单。静态 allowlist 容易隐藏用户通过 OMP settings、插件、扩展、MCP 或未来版本提供的工具。`omp-acp` 的默认扩展和 session setup guard 只移除 active `ask`，保留其他工具发现行为。
+Do not use a static `--tools` allowlist just to disable `ask`. Static allowlists can hide user settings, plugin tools, extension tools, MCP tools, or future OMP tools. `omp-acp` removes only active `ask` through its injected extension and session setup guard.
 
-`OMP_ACP_RUNTIME_ARGS_JSON` 仅适合 fixture、smoke 或非常规调试。使用它时，adapter 不会自动补默认 `--mode rpc` 参数；你必须确保完整命令能启动兼容的 OMP RPC runtime。
+Use `OMP_ACP_RUNTIME_ARGS_JSON` only for fixtures, smoke tests, or unusual debugging. When provided, the adapter does not add `--mode rpc` for you; the full command must start a compatible OMP RPC runtime.
 
-## 能力边界
+## Supported ACP surface
 
-### 已支持
+Supported:
 
 - `initialize`
 - `session/new`
@@ -155,55 +157,55 @@ omp --mode rpc --extension <adapter-disable-ask-extension.mjs>
 - `session/list`
 - `session/load`
 - `session/resume`
-- `session/fork`（从当前持久化 head fork）
+- `session/fork` from the current persisted head
 - `session/set_model`
-- `session/set_config_option`（当前只支持 `model` / `thinking`）
-- `session/set_mode`（当前只支持 `default`）
+- `session/set_config_option` for `model` and `thinking`
+- `session/set_mode` for the default mode only
 - `agent_message_chunk` / `agent_thought_chunk`
 - `tool_call` / `tool_call_update`
-- 结构化 edit diff 的已知 OMP shape
+- Known OMP structured edit diff shapes
 - OMP `confirm` → ACP `session/request_permission`
 - OMP `setWidget` → ACP thought/progress text
 - OMP `todo_write` → ACP `plan`
 
-### 暂不支持或不声明
+Unsupported or undeclared:
 
 - `session/close`
-- ACP MCP HTTP / SSE passthrough
+- ACP HTTP/SSE MCP passthrough
 - ACP filesystem delegation
 - ACP terminal delegation
-- ACP usage update
-- OMP `select` / `input` / `editor`
-- 广义 Ask / elicitation
-- OMP-specific runtime knobs 作为 ACP config options：steering、follow-up、interrupt、auto compaction、sampling、provider config、base URL、secrets、tool/MCP toggles
-- message-bound fork 或 `_meta.messageId` / `_meta.messageID` fork
+- ACP usage updates
+- OMP `select`, `input`, and `editor`
+- Broad Ask / elicitation flows
+- OMP-specific runtime knobs as ACP config options: steering, follow-up, interrupt, auto compaction, sampling, provider config, base URL, secrets, and tool/MCP toggles
+- Message-bound fork or `_meta.messageId` / `_meta.messageID` fork
 
-## Prompt、并发与取消语义
+## Prompt, concurrency, and cancellation semantics
 
-OMP RPC 的 `prompt` response 只是命令接收确认，不代表模型 turn 已结束。`omp-acp` 会等待：
+An OMP RPC `prompt` response only acknowledges command acceptance. It does not mean the model turn has ended. `omp-acp` waits for:
 
-1. OMP runtime 发出 `agent_end`；
-2. `get_state` 确认 runtime 不再 busy；
-3. 已排队的 ACP update delivery 完成；
+1. OMP `agent_end`;
+2. `get_state` showing the runtime is no longer busy;
+3. queued ACP update delivery to finish;
 
-然后才向 ACP client 返回 `stopReason: "end_turn"`。
+before returning ACP `stopReason: "end_turn"`.
 
-如果客户端在生成中发送新的普通 `session/prompt`，adapter 会等当前活动 prompt 完全清理后，再作为新的独立 OMP `prompt` 发送。它不会把普通并发 ACP prompt 映射为 OMP `follow_up`，因为 ACP 0.21.0 没有标准 follow-up / queue / steer 原语。
+If a client sends another ordinary `session/prompt` while a turn is active, the adapter waits for the active prompt to clean up, then sends the next request as a new independent OMP `prompt`. It does not map ordinary concurrent ACP prompts to OMP `follow_up`, because ACP 0.21.0 has no standard follow-up, queue, or steer primitive.
 
-直接「中断并替换 prompt」也不是 ACP 0.21.0 标准能力。客户端可以用 `session/cancel` + 下一次 `session/prompt` 近似实现；adapter 会等待被取消的 runtime turn 清理完成，避免触发 OMP 的 `Agent is already processing`。
+Direct "interrupt and replace this prompt" is also not an ACP 0.21.0 primitive. Clients can approximate it with `session/cancel` followed by a new `session/prompt`; the adapter waits for the cancelled runtime turn to clean up before sending the next prompt, avoiding OMP `Agent is already processing` races.
 
-## 安全与隐私边界
+## Safety and privacy boundary
 
-ACP 可见内容统一经过共享净化边界：
+ACP-visible data goes through shared sanitization boundaries:
 
-- 不向 ACP client 暴露 provider-private payload、raw provider config、API key、token、secret、signature、encrypted reasoning 或 base URL。
-- 历史 `fileMention` 只回放文件路径、URI 或名称，不回放文件内容。
-- 工具 `rawInput` / `rawOutput` 会递归净化可见结构。
-- 无法安全映射的历史块会跳过，而不是让整次 `session/load` 崩溃。
+- Provider-private payloads, raw provider config, API keys, tokens, secrets, signatures, encrypted reasoning, and base URLs are not sent to the ACP client.
+- Historical `fileMention` messages replay only file path, URI, or name fields. File contents are not replayed.
+- Tool `rawInput` and `rawOutput` are recursively sanitized before being exposed.
+- History blocks that cannot be safely mapped are skipped instead of failing the whole `session/load`.
 
-## 开发与验证
+## Development and validation
 
-常用命令：
+Common commands:
 
 ```bash
 npm install
@@ -213,7 +215,7 @@ npm run check
 npm run build
 ```
 
-ACP 与 runtime smoke：
+ACP and runtime smoke tests:
 
 ```bash
 npm run smoke:acp
@@ -225,37 +227,37 @@ npm run validate:acpx
 npm run validate:standard
 ```
 
-说明：
+Notes:
 
-- `smoke:omp-rpc-controls:optional` 是开发机诊断；找不到真实 `omp` 时可以 skip，不能作为发布通过依据。
-- `smoke:omp-rpc-controls:required` 是发布门禁；skip、timeout、失败都会让发布失败。
-- `validate:standard` 会运行自动发布门禁，但不包含 Zed GUI 手工 smoke。
-- `openclaw/acpx` 是第三方 draft assessment。它有助于发现协议边界问题，但不是官方 ACP full conformance 证明，也不是 full pass 声明。
+- `smoke:omp-rpc-controls:optional` is a developer diagnostic. It may skip when a real `omp` executable is unavailable and is not a release pass.
+- `smoke:omp-rpc-controls:required` is a release gate. Skip, timeout, or failure means the release gate failed.
+- `validate:standard` runs the automated release gates, but excludes manual Zed GUI smoke.
+- `openclaw/acpx` is a third-party draft assessment. It helps catch protocol-boundary issues, but it is not an official ACP full conformance suite and should not be described as a full pass.
 
-## 故障排查
+## Troubleshooting
 
-### Zed 里 agent 没启动
+### The agent does not start in Zed
 
-- 确认 `npx -y omp-acp` 或 `node dist/index.js` 在终端可运行。
-- 确认 Zed 继承的 PATH 能找到 `node` 和 `omp`。
-- 如果找不到 `omp`，设置 `OMP_ACP_RUNTIME_COMMAND` 为绝对路径。
-- 在 Zed 中运行 `dev: open acp logs` 查看 ACP 日志。
+- Confirm `npx -y omp-acp` or `node dist/index.js` runs in a terminal.
+- Confirm the PATH inherited by Zed can find both `node` and `omp`.
+- If `omp` is not on that PATH, set `OMP_ACP_RUNTIME_COMMAND` to an absolute path.
+- Use Zed's `dev: open acp logs` command to inspect ACP traffic and stderr diagnostics.
 
-### 下一条消息报 `Agent is already processing`
+### The next prompt fails with `Agent is already processing`
 
-请确认正在使用 v0.1.1 或更新版本，并重启 / reload Zed 的 `omp-acp` agent。旧进程不会热加载新的 `dist/index.js` 或 npm 包。
+Use `omp-acp@0.1.1` or newer, then restart/reload the Zed `omp-acp` agent. Existing processes do not hot-reload a new `dist/index.js` or npm package version.
 
-### `select` / `input` / `editor` 报 unsupported
+### `select`, `input`, or `editor` fails as unsupported
 
-这是预期边界。当前只把 OMP `confirm` 映射为 ACP permission；广义 Ask / elicitation 暂不支持，避免把任意交互伪装成权限请求。
+This is intentional. The adapter currently bridges only OMP `confirm` to ACP permission requests. Broad Ask / elicitation is not supported, and the adapter does not disguise arbitrary input prompts as permissions.
 
-### TODO 不显示或显示旧状态
+### TODO state is missing or stale
 
-v0.1.1 起，`todo_write` 会同步 ACP `plan`。如果客户端仍显示旧状态，请重启对应 agent/session，确认加载的是新版本。
+Starting with v0.1.1, OMP `todo_write` synchronizes ACP `plan` updates. If stale data remains visible, restart the corresponding agent/session and confirm the new adapter version is loaded.
 
-### ZedG 或 Windows 路径问题
+### Windows or ZedG path issues
 
-优先使用绝对路径，并避免在 JSON 字符串中漏转义反斜杠。Windows 示例可以使用正斜杠：
+Prefer absolute paths and avoid unescaped backslashes in JSON. Forward slashes are valid in Windows paths:
 
 ```json
 {
@@ -263,18 +265,56 @@ v0.1.1 起，`todo_write` 会同步 ACP `plan`。如果客户端仍显示旧状�
 }
 ```
 
-## 发布状态
+## Current release status
 
-当前 npm latest：`omp-acp@0.1.1`。
+Current npm latest: `omp-acp@0.1.1`.
 
-发布流程：
+Release flow:
 
-1. 本地运行 `npm run validate:standard` 和 `npm pack --dry-run --json`。
-2. 创建 `vX.Y.Z` Git tag 与 GitHub Release。
-3. GitHub Actions 使用 npm Trusted Publishing 发布到 npm。
+1. Run `npm run validate:standard` and `npm pack --dry-run --json` locally.
+2. Create a `vX.Y.Z` Git tag and GitHub Release.
+3. GitHub Actions publishes to npm through Trusted Publishing.
 
-Zed / ZedG GUI smoke 仍是手工门禁；未执行时不会在发布说明中声称已通过。
+Manual Zed / ZedG GUI smoke is still a local/manual gate. Release notes do not claim it has passed unless it has been performed.
 
-## 许可证
+## 中文概览
 
-`omp-acp` 使用 [Mozilla Public License 2.0](./LICENSE) 发布。
+`omp-acp` 是一个独立的 OMP-native ACP 适配器，用于让 Zed / ZedG 等 ACP 客户端通过 stdio 驱动 Oh My Pi coding agent。
+
+关键点：
+
+- 这不是 OpenAI-compatible API。Zed ACP 需要 ACP JSON-RPC server，因此需要本 adapter 做协议桥接。
+- 默认通过 `omp --mode rpc` 启动真实 OMP runtime。
+- 默认禁用 OMP 的通用 `ask` 工具，但不使用静态 `--tools` 白名单，因此不会屏蔽用户设置、插件、扩展、MCP 或未来工具发现。
+- 支持 prompt streaming、tool updates、session list/load/resume/fork、模型和 thinking 控制、OMP `confirm` permission、`setWidget` 进度展示，以及 `todo_write` → ACP `plan` 同步。
+- 暂不声明 MCP passthrough、filesystem delegation、terminal delegation、`session/close`、广义 Ask / elicitation 或 OMP-specific runtime knobs。
+- v0.1.1 修复了 Zed 下一条消息撞上 OMP busy runtime 的竞态，并修复了 OMP 历史 `fileMention` 导致的加载失败。
+
+最小 Zed 配置：
+
+```json
+{
+  "agent_servers": {
+    "omp-acp": {
+      "type": "custom",
+      "command": "npx",
+      "args": ["-y", "omp-acp"],
+      "env": {}
+    }
+  }
+}
+```
+
+如果 Zed 找不到 `omp`，在 `env` 中添加：
+
+```json
+{
+  "OMP_ACP_RUNTIME_COMMAND": "C:/path/to/omp"
+}
+```
+
+升级后请重启或 reload Zed / ZedG 中的 `omp-acp` agent/session；已运行进程不会热加载新版本。
+
+## License
+
+`omp-acp` is distributed under the [Mozilla Public License 2.0](./LICENSE).
