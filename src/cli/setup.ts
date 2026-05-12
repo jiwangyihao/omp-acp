@@ -36,7 +36,7 @@ export async function runSetupCli(options: SetupCliOptions): Promise<number> {
 
   const executable = options.env.OMP_ACP_RUNTIME_COMMAND?.trim() || "omp";
   const command = buildOmpRpcCommand({ executable });
-  const readyTimeoutMs = options.readyTimeoutMs ?? DEFAULT_READY_TIMEOUT_MS;
+  const readyTimeoutMs = options.readyTimeoutMs ?? readReadyTimeoutMs(options.env);
   const runtimeOptions: SetupRuntimeOptions = {
     command: command.command,
     args: command.args,
@@ -103,6 +103,20 @@ function normalizeModels(value: unknown): unknown[] {
   return [];
 }
 
+
+function readReadyTimeoutMs(env: NodeJS.ProcessEnv): number {
+  const raw = env.OMP_ACP_SETUP_READY_TIMEOUT_MS;
+  if (raw === undefined || raw.trim().length === 0) {
+    return DEFAULT_READY_TIMEOUT_MS;
+  }
+
+  const parsed = Number.parseInt(raw, 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return DEFAULT_READY_TIMEOUT_MS;
+  }
+
+  return parsed;
+}
 function readPackageVersion(): string {
   for (const url of [new URL("../../package.json", import.meta.url), new URL("../package.json", import.meta.url)]) {
     try {

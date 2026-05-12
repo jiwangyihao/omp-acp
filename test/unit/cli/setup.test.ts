@@ -49,6 +49,26 @@ test("runSetupCli exits 0 when OMP RPC is reachable and models are available", a
   assert.equal(fixture.closed, true);
 });
 
+test("runSetupCli reads setup ready timeout from environment", async () => {
+  const io = createIo();
+  const fixture = createRuntime([{ provider: "fixture", id: "model", name: "Fixture" }]);
+  let observedReadyTimeoutMs: number | undefined;
+
+  const exitCode = await runSetupCli({
+    env: { OMP_ACP_SETUP_READY_TIMEOUT_MS: "120000" },
+    cwd: process.cwd(),
+    io: io.io,
+    startRuntime: (options) => {
+      observedReadyTimeoutMs = options.readyTimeoutMs;
+      return fixture.runtime;
+    },
+  });
+
+  assert.equal(exitCode, 0);
+  assert.equal(observedReadyTimeoutMs, 120000);
+  assert.equal(fixture.closed, true);
+});
+
 test("runSetupCli normalizes object model responses", async () => {
   const io = createIo();
   const fixture = createRuntime({ models: [{ provider: "fixture", id: "model", name: "Fixture" }] });
