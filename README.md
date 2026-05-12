@@ -290,7 +290,7 @@ Prefer absolute paths and avoid unescaped backslashes in JSON. Forward slashes a
 
 ## Current release status
 
-Current npm latest: `omp-acp@0.1.1`.
+Current npm latest: `omp-acp@0.1.2`.
 
 Release flow:
 
@@ -312,7 +312,7 @@ Manual Zed / ZedG GUI smoke is still a local/manual gate. Release notes do not c
 - 支持 prompt streaming、tool updates、session list/load/resume/fork、模型和 thinking 控制、OMP `confirm` permission、`setWidget` 进度展示，以及 `todo_write` → ACP `plan` 同步。
 - 暂不声明 MCP passthrough、filesystem delegation、terminal delegation、`session/close`、广义 Ask / elicitation 或 OMP-specific runtime knobs。
 - `omp-acp --setup` 只检查并引导 OMP 本地模型认证配置，不收集、不保存、不打印 provider API key。
-- v0.1.1 修复了 Zed 下一条消息撞上 OMP busy runtime 的竞态，并修复了 OMP 历史 `fileMention` 导致的加载失败。
+- v0.1.2 adds Terminal Auth setup for ACP Registry-compatible clients and maps active-turn follow-up `session/prompt` requests to OMP `steer`; v0.1.1 fixed the Zed busy-runtime race and OMP history `fileMention` loading.
 
 最小 Zed 配置：
 
