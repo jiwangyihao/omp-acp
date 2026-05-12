@@ -43,7 +43,10 @@ class FakeRuntimeAdapter implements RuntimeAdapter {
   readonly sentFrames: Record<string, unknown>[] = [];
   nextSendError: Error | undefined;
   rejectNextPromptAsBusy = false;
+  rejectNextSteerAsBusy = false;
   holdAbortAndPrompt = false;
+  holdSteer = false;
+  readonly steerDeferreds: Array<Deferred<unknown>> = [];
   readonly abortAndPromptDeferreds: Array<Deferred<unknown>> = [];
   state: Record<string, unknown> = { ...structuredClone(CONTROL_STATE), isStreaming: false };
   resolvePromptWhenRejectingBusy = false;
@@ -72,7 +75,19 @@ class FakeRuntimeAdapter implements RuntimeAdapter {
       this.promptDeferreds.push(deferred);
       return deferred.promise;
     }
-    if (method === "follow_up" || method === "steer") {
+    if (method === "follow_up") {
+      return Promise.resolve({ ok: true });
+    }
+    if (method === "steer") {
+      if (this.rejectNextSteerAsBusy) {
+        this.rejectNextSteerAsBusy = false;
+        return Promise.reject(new Error("OMP RPC steer response error: Agent is already processing. Use steer() or followUp() to queue messages, or wait for completion."));
+      }
+      if (this.holdSteer) {
+        const deferred = new Deferred<unknown>();
+        this.steerDeferreds.push(deferred);
+        return deferred.promise;
+      }
       return Promise.resolve({ ok: true });
     }
     if (method === "abort_and_prompt") {
@@ -283,7 +298,7 @@ test("concurrent prompt during runtime idle wait starts after owner cleanup", as
   assert.deepEqual(await secondPrompt, { stopReason: "end_turn" });
 });
 
-test("concurrent prompt interrupts active turn and echoes ACP messageId", async () => {
+test("concurrent prompt steers active turn and echoes ACP messageId", async () => {
   const { manager, connection, runtime } = await createSession();
   const messageId = "11111111-1111-4111-8111-111111111111";
   const secondMessageId = "22222222-2222-4222-8222-222222222222";
@@ -294,17 +309,20 @@ test("concurrent prompt interrupts active turn and echoes ACP messageId", async 
     { manager, connection },
   );
 
-  await waitForCondition(() => runtime.requests.some((request) => request.method === "abort_and_prompt"));
+  await waitForCondition(() => runtime.requests.some((request) => request.method === "steer"));
 
-  assert.equal(runtime.promptDeferreds.length, 1, "replacement must not start a competing prompt request");
-  assert.deepEqual(runtime.requests.at(-1), { method: "abort_and_prompt", params: { message: "second" } });
+  assert.equal(runtime.promptDeferreds.length, 1, "steer must not start a competing prompt request");
+  assert.deepEqual(runtime.requests.at(-1), { method: "steer", params: { message: "second" } });
+  assert.equal(runtime.requests.some((request) => request.method === "abort_and_prompt"), false);
 
   assert.deepEqual(await secondPrompt, { stopReason: "end_turn", userMessageId: secondMessageId });
 
-  firstPrompt.catch(() => undefined);
+  runtime.promptDeferreds[0]!.resolve({});
+  runtime.emit({ type: "event", eventType: "agent_end", raw: {} });
+  assert.deepEqual(await firstPrompt, { stopReason: "end_turn", userMessageId: messageId });
 });
 
-test("concurrent replacement keeps owning prompt active past stale agent_end", async () => {
+test("concurrent steer keeps owning prompt active until agent_end", async () => {
   const { manager, connection, runtime } = await createSession();
   const firstPrompt = handleSessionPrompt(promptRequest(), { manager, connection });
   const secondPrompt = handleSessionPrompt(promptRequest({ prompt: [{ type: "text", text: "second" }] }), { manager, connection });
@@ -313,17 +331,16 @@ test("concurrent replacement keeps owning prompt active past stale agent_end", a
     firstSettled = true;
   });
 
-  await waitForCondition(() => runtime.requests.some((request) => request.method === "abort_and_prompt"));
+  await waitForCondition(() => runtime.requests.some((request) => request.method === "steer"));
   assert.deepEqual(await secondPrompt, { stopReason: "end_turn" });
 
-  runtime.emit({ type: "event", eventType: "agent_end", raw: {} });
   await new Promise<void>((resolve) => setImmediate(resolve));
-  assert.equal(firstSettled, false, "stale old-turn agent_end after replacement ACK must not finish owner prompt");
+  assert.equal(firstSettled, false, "steered owner prompt must remain active until runtime agent_end");
   assert.equal(manager.requireSession("session-1").activePrompt !== undefined, true);
 
   runtime.state.isStreaming = false;
-  runtime.emit({ type: "event", eventType: "agent_end", raw: {} });
   runtime.promptDeferreds[0]!.resolve({});
+  runtime.emit({ type: "event", eventType: "agent_end", raw: {} });
   assert.deepEqual(await firstPrompt, { stopReason: "end_turn" });
   assert.equal(runtime.listeners.size, 0);
   assert.equal(manager.requireSession("session-1").activePrompt, undefined);
@@ -340,30 +357,34 @@ test("cancelled prompt echoes ACP messageId in cancelled response", async () => 
   finishRuntimePrompt(runtime, 0);
 });
 
-test("concurrent text prompt aborts and replaces the active OMP turn", async () => {
+test("concurrent text prompt steers the active OMP turn", async () => {
   const { manager, connection, runtime } = await createSession();
 
   const firstPrompt = handleSessionPrompt(promptRequest(), { manager, connection });
   const secondPrompt = handleSessionPrompt(promptRequest({ prompt: [{ type: "text", text: "second" }] }), { manager, connection });
 
-  await waitForCondition(() => runtime.requests.some((request) => request.method === "abort_and_prompt"));
+  await waitForCondition(() => runtime.requests.some((request) => request.method === "steer"));
 
-  assert.equal(runtime.promptDeferreds.length, 1, "replacement must reuse the active lifecycle");
-  assert.deepEqual(runtime.requests.at(-1), { method: "abort_and_prompt", params: { message: "second" } });
+  assert.equal(runtime.promptDeferreds.length, 1, "steer must keep the active lifecycle owned by the first prompt");
+  assert.deepEqual(runtime.requests.at(-1), { method: "steer", params: { message: "second" } });
+  assert.equal(runtime.requests.some((request) => request.method === "abort_and_prompt"), false);
 
   assert.deepEqual(await secondPrompt, { stopReason: "end_turn" });
 
-  firstPrompt.catch(() => undefined);
+  runtime.promptDeferreds[0]!.resolve({});
+  runtime.emit({ type: "event", eventType: "agent_end", raw: {} });
+  assert.deepEqual(await firstPrompt, { stopReason: "end_turn" });
 });
 
-test("replacement after prompt ACK releases owner on recovered agent_end", async () => {
+test("concurrent prompt after prompt ACK steers owner and releases on agent_end", async () => {
   const { manager, connection, runtime } = await createSession();
   const firstPrompt = handleSessionPrompt(promptRequest(), { manager, connection });
   runtime.promptDeferreds[0]!.resolve({});
   await new Promise<void>((resolve) => setImmediate(resolve));
 
   const secondPrompt = handleSessionPrompt(promptRequest({ prompt: [{ type: "text", text: "second" }] }), { manager, connection });
-  await waitForCondition(() => runtime.requests.some((request) => request.method === "abort_and_prompt"));
+  await waitForCondition(() => runtime.requests.some((request) => request.method === "steer"));
+  assert.deepEqual(runtime.requests.at(-1), { method: "steer", params: { message: "second" } });
   assert.deepEqual(await secondPrompt, { stopReason: "end_turn" });
 
   runtime.state.isStreaming = false;
@@ -373,19 +394,73 @@ test("replacement after prompt ACK releases owner on recovered agent_end", async
   assert.equal(manager.requireSession("session-1").activePrompt, undefined);
 });
 
-test("replacement handles abort_and_prompt ACK with recovered agent_end in same turn", async () => {
+test("concurrent steer prompt returns cancelled if owner is cancelled before steer ACK", async () => {
   const { manager, connection, runtime } = await createSession();
-  runtime.emitRecoveredAgentEndWithAbortAndPromptAck = true;
+  runtime.holdSteer = true;
 
   const firstPrompt = handleSessionPrompt(promptRequest(), { manager, connection });
   const secondPrompt = handleSessionPrompt(promptRequest({ prompt: [{ type: "text", text: "second" }] }), { manager, connection });
 
-  assert.deepEqual(await secondPrompt, { stopReason: "end_turn" });
+  await waitForCondition(() => runtime.steerDeferreds.length === 1);
+  await handleSessionCancel({ sessionId: "session-1" }, manager);
+
+  assert.deepEqual(await secondPrompt, { stopReason: "cancelled" });
+
   runtime.promptDeferreds[0]!.resolve({});
+  assert.deepEqual(await firstPrompt, { stopReason: "cancelled" });
+});
+
+test("concurrent steer prompt propagates owner failure before steer ACK", async () => {
+  const { manager, connection, runtime } = await createSession();
+  runtime.holdSteer = true;
+
+  const firstPrompt = handleSessionPrompt(promptRequest(), { manager, connection });
+  const secondPrompt = handleSessionPrompt(promptRequest({ prompt: [{ type: "text", text: "second" }] }), { manager, connection });
+
+  await waitForCondition(() => runtime.steerDeferreds.length === 1);
+  runtime.emit({ type: "event", eventType: "extension_error", raw: { message: "boom" } });
+
+  await assert.rejects(secondPrompt, /Runtime extension error: boom/);
+  await assert.rejects(firstPrompt, /Runtime extension error: boom/);
+});
+
+test("concurrent steer prompt propagates owner busy-looking failure before steer ACK", async () => {
+  const { manager, connection, runtime } = await createSession();
+  runtime.holdSteer = true;
+
+  const firstPrompt = handleSessionPrompt(promptRequest(), { manager, connection });
+  const secondPrompt = handleSessionPrompt(promptRequest({ prompt: [{ type: "text", text: "second" }] }), { manager, connection });
+
+  await waitForCondition(() => runtime.steerDeferreds.length === 1);
+  runtime.emit({
+    type: "event",
+    eventType: "extension_error",
+    raw: { message: "Agent is already processing. Use steer() or followUp() to queue messages, or wait for completion." },
+  });
+
+  await assert.rejects(secondPrompt, /Agent is already processing/);
+  await assert.rejects(firstPrompt, /Agent is already processing/);
+  assert.equal(runtime.requests.some((request) => request.method === "abort_and_prompt"), false);
+});
+
+test("concurrent steer prompt retries after owner completes before steer ACK", async () => {
+  const { manager, connection, runtime } = await createSession();
+  runtime.holdSteer = true;
+
+  const firstPrompt = handleSessionPrompt(promptRequest(), { manager, connection });
+  const secondPrompt = handleSessionPrompt(promptRequest({ prompt: [{ type: "text", text: "second" }] }), { manager, connection });
+
+  await waitForCondition(() => runtime.steerDeferreds.length === 1);
+  runtime.promptDeferreds[0]!.resolve({});
+  runtime.emit({ type: "event", eventType: "agent_end", raw: {} });
 
   assert.deepEqual(await firstPrompt, { stopReason: "end_turn" });
-  assert.equal(runtime.listeners.size, 0);
-  assert.equal(manager.requireSession("session-1").activePrompt, undefined);
+  await waitForCondition(() => runtime.promptDeferreds.length === 2);
+  assert.deepEqual(runtime.requests.at(-1), { method: "prompt", params: { message: "second" } });
+
+  runtime.promptDeferreds[1]!.resolve({});
+  runtime.emit({ type: "event", eventType: "agent_end", raw: {} });
+  assert.deepEqual(await secondPrompt, { stopReason: "end_turn" });
 });
 
 test("busy fallback handles abort_and_prompt ACK with recovered agent_end in same turn", async () => {
@@ -402,8 +477,9 @@ test("busy fallback handles abort_and_prompt ACK with recovered agent_end in sam
   assert.equal(manager.requireSession("session-1").activePrompt, undefined);
 });
 
-test("replacement cancel after stale agent_end releases owner cleanup", async () => {
+test("steer busy fallback cancellation releases owner cleanup", async () => {
   const { manager, connection, runtime } = await createSession();
+  runtime.rejectNextSteerAsBusy = true;
   runtime.holdAbortAndPrompt = true;
 
   const firstPrompt = handleSessionPrompt(promptRequest(), { manager, connection });
@@ -424,8 +500,9 @@ test("replacement cancel after stale agent_end releases owner cleanup", async ()
   assert.equal(runtime.listeners.size, 0);
 });
 
-test("replacement propagates owner failure before abort_and_prompt ACK", async () => {
+test("steer busy fallback propagates owner failure before abort_and_prompt ACK", async () => {
   const { manager, connection, runtime } = await createSession();
+  runtime.rejectNextSteerAsBusy = true;
   runtime.holdAbortAndPrompt = true;
 
   const firstPrompt = handleSessionPrompt(promptRequest(), { manager, connection });
@@ -444,8 +521,9 @@ test("replacement propagates owner failure before abort_and_prompt ACK", async (
   assert.equal(manager.requireSession("session-1").activePrompt, undefined);
 });
 
-test("replacement prompt returns cancelled without waiting for stuck abort_and_prompt", async () => {
+test("steer busy fallback returns cancelled without waiting for stuck abort_and_prompt", async () => {
   const { manager, connection, runtime } = await createSession();
+  runtime.rejectNextSteerAsBusy = true;
   runtime.holdAbortAndPrompt = true;
 
   const firstPrompt = handleSessionPrompt(promptRequest(), { manager, connection });
@@ -1094,25 +1172,26 @@ test("event translation failure stops accepting same-turn assistant updates", as
   assert.deepEqual(connection.updates, []);
 });
 
-test("replacement prompt returns after abort_and_prompt accepts", async () => {
+test("concurrent steer prompt returns after steer accepts", async () => {
   const { manager, connection, runtime } = await createSession();
-  runtime.holdAbortAndPrompt = true;
 
   const firstPrompt = handleSessionPrompt(promptRequest(), { manager, connection });
-  firstPrompt.catch(() => undefined);
-  const replacementPrompt = handleSessionPrompt(promptRequest({ prompt: [{ type: "text", text: "queued" }] }), { manager, connection });
-  let replacementSettled = false;
-  replacementPrompt.then(() => {
-    replacementSettled = true;
+  const steeredPrompt = handleSessionPrompt(promptRequest({ prompt: [{ type: "text", text: "queued" }] }), { manager, connection });
+  let steeredSettled = false;
+  steeredPrompt.then(() => {
+    steeredSettled = true;
   });
 
-  await waitForCondition(() => runtime.abortAndPromptDeferreds.length === 1);
+  await waitForCondition(() => runtime.requests.some((request) => request.method === "steer"));
   assert.equal(runtime.promptDeferreds.length, 1);
 
-  runtime.abortAndPromptDeferreds[0]!.resolve({ ok: true });
-  assert.deepEqual(await replacementPrompt, { stopReason: "end_turn" });
-  assert.equal(replacementSettled, true);
-  assert.equal(runtime.promptDeferreds.length, 1, "replacement must not start a new prompt request");
+  assert.deepEqual(await steeredPrompt, { stopReason: "end_turn" });
+  assert.equal(steeredSettled, true);
+  assert.equal(runtime.promptDeferreds.length, 1, "steer must not start a new prompt request");
+
+  runtime.promptDeferreds[0]!.resolve({});
+  runtime.emit({ type: "event", eventType: "agent_end", raw: {} });
+  assert.deepEqual(await firstPrompt, { stopReason: "end_turn" });
 });
 
 test("event failure suppresses late duplicate agent_end messages fallback and preserves rejection", async () => {

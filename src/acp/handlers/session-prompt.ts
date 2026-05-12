@@ -64,6 +64,37 @@ export async function handleSessionPrompt(
     }
 
     const translated = translatePromptToOmpRequest(params);
+    const ownerOutcome = existingPrompt.completion.then((outcome) => ({ status: "owner" as const, outcome }));
+    const steerRequest = existingSession.runtime.request("steer", translated.params).then(
+      () => ({ status: "accepted" as const }),
+      (error) => ({ status: "steerRejected" as const, error }),
+    );
+    const steerOutcome = await Promise.race([
+      steerRequest,
+      existingPrompt.cancellation.cancelled.then(() => ({ status: "cancelled" as const })),
+      ownerOutcome,
+    ]);
+    if (steerOutcome.status === "accepted") {
+      return promptResponse(params, "end_turn");
+    }
+    if (steerOutcome.status === "owner" && steerOutcome.outcome.status === "error") {
+      throw steerOutcome.outcome.error;
+    }
+    if (steerOutcome.status === "owner" && steerOutcome.outcome.status === "closed") {
+      throw new SessionManagerError(`Session closed during active prompt: ${params.sessionId}`);
+    }
+    if (steerOutcome.status === "owner" && steerOutcome.outcome.status === "cancelled") {
+      return promptResponse(params, "cancelled");
+    }
+    if (steerOutcome.status === "owner") {
+      return handleSessionPrompt(params, { manager, connection, hostToolRegistry, cancelledPromptCleanupTimeoutMs });
+    }
+    if (steerOutcome.status === "cancelled") {
+      return promptResponse(params, "cancelled");
+    }
+    if (!isBusyPromptError(steerOutcome.error)) {
+      throw steerOutcome.error;
+    }
     existingPrompt.replacementRequested = true;
     existingPrompt.acceptsQueuedPrompt = false;
     existingPrompt.beginReplacement?.();
@@ -75,16 +106,15 @@ export async function handleSessionPrompt(
         }
         return existingPrompt.completion.then((outcome) => ({ status: "owner" as const, outcome }));
       },
-      (error) => {
+      (abortAndPromptError) => {
         existingPrompt.rejectReplacement?.();
         existingPrompt.replacementRequested = false;
         if (!existingPrompt.cancellation.isCancelled) {
           existingPrompt.acceptsQueuedPrompt = true;
         }
-        throw error;
+        throw abortAndPromptError;
       },
     );
-    const ownerOutcome = existingPrompt.completion.then((outcome) => ({ status: "owner" as const, outcome }));
     const replacementOutcome = await Promise.race([
       replacementRequest,
       existingPrompt.cancellation.cancelled.then(() => ({ status: "cancelled" as const })),
