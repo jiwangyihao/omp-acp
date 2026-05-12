@@ -1,4 +1,8 @@
-# omp-acp
+<p align="center">
+  <img src="./docs/registry-icon.svg" alt="Oh My Pi ACP icon" width="64" height="64">
+</p>
+
+<h1 align="center">omp-acp</h1>
 
 [![npm](https://img.shields.io/npm/v/omp-acp)](https://www.npmjs.com/package/omp-acp)
 [![Release](https://github.com/jiwangyihao/omp-acp/actions/workflows/release.yml/badge.svg)](https://github.com/jiwangyihao/omp-acp/actions/workflows/release.yml)
