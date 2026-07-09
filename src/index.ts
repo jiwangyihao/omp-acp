@@ -5,7 +5,7 @@ import { runSetupCli, writeHelp, writeVersion } from "./cli/setup.ts";
 import { startAcpServer } from "./acp/server.ts";
 import { createStdioAcpStream } from "./acp/transport/stdio.ts";
 import { startOmpRpcClient } from "./runtime/omp/rpc-client.ts";
-import { resolveOmpRpcCommandFromEnv } from "./runtime/omp/command.ts";
+import { buildAdditionalDirectoriesEnv, resolveOmpRpcCommandFromEnv } from "./runtime/omp/command.ts";
 import type { RuntimeFactory } from "./session/manager.ts";
 
 process.exitCode = await main();
@@ -58,5 +58,10 @@ function createRuntimeFactoryFromEnv(env: NodeJS.ProcessEnv): RuntimeFactory | u
     return undefined;
   }
 
-  return (input) => startOmpRpcClient({ command: command.command, args: command.args, cwd: input.cwd });
+  return (input) => startOmpRpcClient({
+    command: command.command,
+    args: command.args,
+    cwd: input.cwd,
+    env: buildAdditionalDirectoriesEnv(input.additionalDirectories),
+  });
 }

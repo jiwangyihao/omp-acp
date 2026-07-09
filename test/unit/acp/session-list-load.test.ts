@@ -157,7 +157,7 @@ test("loadSession switches runtime to OMP session path, replays text history, an
   assert.ok(response.configOptions?.some((option: { id: string }) => option.id === "model"));
   assert.equal(Object.hasOwn(response, "runtimeSessionId"), false);
   assert.equal(inputs.length, 1);
-  assert.deepEqual(inputs[0], { sessionId: "load-me", cwd, mcpServers: [] });
+  assert.deepEqual(inputs[0], { sessionId: "load-me", cwd, mcpServers: [], additionalDirectories: [] });
   assert.deepEqual(runtimes[0]?.requests, [
     { method: "switch_session", params: { sessionPath } },
     { method: "get_state", params: undefined },

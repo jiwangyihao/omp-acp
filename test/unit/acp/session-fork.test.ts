@@ -158,7 +158,7 @@ test("forkSession creates an OMP fork file, switches runtime before publishing, 
   assert.ok(response.configOptions?.some((option) => option.id === "model"));
   assert.equal(Object.hasOwn(response, "runtimeSessionId"), false);
   assert.equal(inputs.length, 1);
-  assert.deepEqual(inputs[0], { sessionId: "fork-session", cwd, mcpServers: [] });
+  assert.deepEqual(inputs[0], { sessionId: "fork-session", cwd, mcpServers: [], additionalDirectories: [] });
   assert.equal(runtimes.length, 1);
   const requests = runtimes[0]?.requests ?? [];
   const switchRequest = requests.find((request) => request.method === "switch_session");

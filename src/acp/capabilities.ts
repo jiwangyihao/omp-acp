@@ -27,6 +27,7 @@ export function buildInitialAgentCapabilities(): AgentCapabilities {
       list: {},
       resume: {},
       fork: {},
+      additionalDirectories: {},
     },
   };
 }

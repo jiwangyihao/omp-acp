@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { buildOmpRpcCommand, resolveOmpRpcCommandFromEnv } from "../../../src/runtime/omp/command.ts";
+import { buildAdditionalDirectoriesEnv, buildOmpRpcCommand, OMP_ACP_ADDITIONAL_DIRS_ENV, resolveOmpRpcCommandFromEnv } from "../../../src/runtime/omp/command.ts";
 
 test("buildOmpRpcCommand launches OMP RPC without a static tool allowlist", () => {
   const command = buildOmpRpcCommand();
@@ -73,4 +73,24 @@ test("resolveOmpRpcCommandFromEnv rejects invalid args JSON", () => {
     () => resolveOmpRpcCommandFromEnv({ OMP_ACP_RUNTIME_ARGS_JSON: JSON.stringify(["--mode", 3]) }),
     /OMP_ACP_RUNTIME_ARGS_JSON must be a JSON array of strings/,
   );
+});
+test("buildOmpRpcCommand injects the additional-directories extension", () => {
+  const command = buildOmpRpcCommand();
+
+  const extensionPaths = command.args
+    .map((arg, index) => (command.args[index - 1] === "--extension" ? arg : undefined))
+    .filter((arg): arg is string => arg !== undefined);
+  assert.equal(extensionPaths.length, 2);
+  assert.match(extensionPaths[0]!, /disable-ask-extension\.mjs$/);
+  assert.match(extensionPaths[1]!, /additional-directories-extension\.mjs$/);
+});
+
+test("buildAdditionalDirectoriesEnv returns empty env for no directories", () => {
+  assert.deepEqual(buildAdditionalDirectoriesEnv([]), {});
+});
+
+test("buildAdditionalDirectoriesEnv serializes directories as JSON", () => {
+  assert.deepEqual(buildAdditionalDirectoriesEnv(["/extra/root1", "C:/extra/root2"]), {
+    [OMP_ACP_ADDITIONAL_DIRS_ENV]: JSON.stringify(["/extra/root1", "C:/extra/root2"]),
+  });
 });
