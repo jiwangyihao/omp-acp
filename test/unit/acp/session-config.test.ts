@@ -102,7 +102,7 @@ test("handleSessionNew disables ask before building setup state and publishes ru
   assert.ok(response.modes);
   assert.ok(response.configOptions?.some((option) => option.id === "model"));
   assert.equal(Object.hasOwn(response, "runtimeSessionId"), false);
-  assert.deepEqual(inputs, [{ cwd: "/workspace/project", mcpServers: [], sessionId: "session-1" }]);
+  assert.deepEqual(inputs, [{ cwd: "/workspace/project", mcpServers: [], sessionId: "session-1", additionalDirectories: [] }]);
   assert.deepEqual(runtimes[0]?.requests, [
     { method: "get_state", params: undefined },
     { method: "set_active_tools", params: { toolNames: ["read", "plugin_tool"] } },

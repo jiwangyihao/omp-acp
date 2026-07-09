@@ -16,6 +16,7 @@ import {
 } from "@agentclientprotocol/sdk";
 import { handleAuthenticate } from "./handlers/authenticate.ts";
 import { handleInitialize } from "./handlers/initialize.ts";
+import { buildAdditionalDirectoriesEnv } from "../runtime/omp/command.ts";
 import { startOmpRpcClient } from "../runtime/omp/rpc-client.ts";
 import { SessionManager, SessionManagerError, type RuntimeFactory } from "../session/manager.ts";
 import { handleSessionCancel } from "./handlers/session-cancel.ts";
@@ -37,7 +38,10 @@ export interface StartAcpServerOptions {
 
 export function startAcpServer(options: StartAcpServerOptions): AgentSideConnection {
   const manager = new SessionManager({
-    runtimeFactory: options.runtimeFactory ?? ((input) => startOmpRpcClient({ cwd: input.cwd })),
+    runtimeFactory: options.runtimeFactory ?? ((input) => startOmpRpcClient({
+      cwd: input.cwd,
+      env: buildAdditionalDirectoriesEnv(input.additionalDirectories),
+    })),
   });
   const agentOptions = options.agentDir !== undefined ? { agentDir: options.agentDir } : {};
   const connection = new AgentSideConnection((conn) => createOmpAcpAgent(conn, manager, options.hostToolRegistry, agentOptions), options.stream);

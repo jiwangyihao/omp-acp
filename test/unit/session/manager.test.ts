@@ -191,7 +191,7 @@ test("createSession awaits runtime readiness and stores the runtime", async () =
   const mcpServers = [{ name: "fixture", command: "server", args: [], env: [] }];
   const createPromise = manager.createSession(newSessionRequest({ cwd: "/tmp/work", mcpServers }));
   assert.equal(runtimes.length, 1);
-  assert.deepEqual(inputs, [{ cwd: "/tmp/work", mcpServers, sessionId: "session-1" }]);
+  assert.deepEqual(inputs, [{ cwd: "/tmp/work", mcpServers, sessionId: "session-1", additionalDirectories: [] }]);
 
   runtimes[0]!.readyDeferred.resolve();
   assert.deepEqual(await createPromise, { sessionId: "session-1" });
@@ -448,4 +448,34 @@ test("PromptCancellation exposes cancellation state and throws when cancelled", 
 
   assert.equal(cancellation.isCancelled, true);
   assert.throws(() => cancellation.throwIfCancelled(), /cancelled/i);
+});
+test("createSession normalizes additionalDirectories: dedupes and drops cwd entries", async () => {
+  const { manager, runtimes, inputs } = createManager();
+
+  const createPromise = manager.createSession(newSessionRequest({
+    cwd: "/tmp/work",
+    additionalDirectories: ["/extra/root1", "/tmp/work", "/extra/root1", "/extra/root2"],
+  }));
+  runtimes[0]!.readyDeferred.resolve();
+  await createPromise;
+
+  assert.deepEqual(inputs[0]!.additionalDirectories, ["/extra/root1", "/extra/root2"]);
+  const record = manager.requireSession("session-1");
+  assert.deepEqual(record.additionalDirectories, ["/extra/root1", "/extra/root2"]);
+});
+
+test("createSession rejects relative additionalDirectories entries without reserving the session id", async () => {
+  const { manager, runtimes, inputs } = createManager();
+
+  await assert.rejects(
+    manager.createSession(newSessionRequest({ additionalDirectories: ["relative/path"] })),
+    /additionalDirectories entries must be absolute paths/,
+  );
+  assert.equal(runtimes.length, 0);
+  assert.equal(inputs.length, 0);
+
+  const createPromise = manager.createSession(newSessionRequest());
+  runtimes[0]!.readyDeferred.resolve();
+  await createPromise;
+  assert.notEqual(manager.tryGetSession("session-2"), undefined);
 });

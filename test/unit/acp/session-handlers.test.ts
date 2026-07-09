@@ -230,7 +230,7 @@ test("session/new returns the created session id", async () => {
   assert.ok(response.modes);
   assert.ok(response.configOptions?.some((option) => option.id === "model"));
   assert.equal(runtimes.length, 1);
-  assert.deepEqual(inputs, [{ cwd: "/tmp/project", mcpServers: [], sessionId: "session-1" }]);
+  assert.deepEqual(inputs, [{ cwd: "/tmp/project", mcpServers: [], sessionId: "session-1", additionalDirectories: [] }]);
 });
 
 test("prompt stays active until runtime emits agent_end", async () => {

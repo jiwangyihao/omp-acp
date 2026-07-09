@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
-import type { ForkSessionRequest, LoadSessionRequest, NewSessionRequest, NewSessionResponse, ResumeSessionRequest } from "@agentclientprotocol/sdk";
+import { isAbsolute } from "node:path";
+import { RequestError, type ForkSessionRequest, type LoadSessionRequest, type NewSessionRequest, type NewSessionResponse, type ResumeSessionRequest } from "@agentclientprotocol/sdk";
 import type { RuntimeAdapter } from "../runtime/RuntimeAdapter.ts";
 import { PromptCancellation } from "./cancellation.ts";
 
@@ -21,6 +22,7 @@ export type RuntimeFactoryInput = {
   cwd: string;
   mcpServers: unknown[];
   sessionId: string;
+  additionalDirectories: string[];
 };
 
 export type RuntimeFactory = (input: RuntimeFactoryInput) => RuntimeAdapter;
@@ -65,6 +67,27 @@ function extractDumpToolNames(state: unknown): string[] {
     .filter((name): name is string => name !== undefined);
 }
 
+function normalizeAdditionalDirectories(cwd: string, additionalDirectories: readonly string[] | undefined): string[] {
+  if (additionalDirectories === undefined || additionalDirectories.length === 0) {
+    return [];
+  }
+  for (const directory of additionalDirectories) {
+    if (typeof directory !== "string" || directory.length === 0 || !isAbsolute(directory)) {
+      throw RequestError.invalidParams(undefined, `additionalDirectories entries must be absolute paths: ${String(directory)}`);
+    }
+  }
+  const seen = new Set<string>([cwd]);
+  const normalized: string[] = [];
+  for (const directory of additionalDirectories) {
+    if (seen.has(directory)) {
+      continue;
+    }
+    seen.add(directory);
+    normalized.push(directory);
+  }
+  return normalized;
+}
+
 function normalizeCreateSessionHooks(hooks?: CreateSessionPublishHooks): CreateSessionHooks {
   if (hooks === undefined) {
     return {};
@@ -94,6 +117,7 @@ export type SessionRecord = {
   sessionId: string;
   cwd: string;
   mcpServers: unknown[];
+  additionalDirectories: string[];
   runtime: RuntimeAdapter;
   activePrompt: ActivePrompt | undefined;
 };
@@ -152,6 +176,7 @@ export class SessionManager {
     params: NewSessionRequest | LoadSessionRequest | ResumeSessionRequest | ForkSessionRequest,
     hooks?: CreateSessionPublishHooks,
   ): Promise<SessionRecord> {
+    const additionalDirectories = normalizeAdditionalDirectories(params.cwd, params.additionalDirectories);
     if (this.#sessions.has(sessionId) || this.#pendingSessionIds.has(sessionId)) {
       throw new SessionManagerError(`Session already exists: ${sessionId}`);
     }
@@ -162,6 +187,7 @@ export class SessionManager {
       cwd: params.cwd,
       mcpServers: params.mcpServers ?? [],
       sessionId,
+      additionalDirectories,
     };
     const cleanupGeneration = this.#cleanupGeneration;
     let runtime: RuntimeAdapter | undefined;
@@ -198,6 +224,7 @@ export class SessionManager {
         sessionId: publishedSessionId,
         cwd: params.cwd,
         mcpServers: params.mcpServers ?? [],
+        additionalDirectories,
         runtime,
         activePrompt: undefined,
       };

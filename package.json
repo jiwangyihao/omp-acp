@@ -29,7 +29,7 @@
   ],
   "scripts": {
     "dev": "tsx src/index.ts",
-    "build": "tsup src/index.ts --format esm --platform node --target node20 --clean && node -e \"require('node:fs').copyFileSync('src/runtime/omp/disable-ask-extension.mjs','dist/disable-ask-extension.mjs')\"",
+    "build": "tsup src/index.ts --format esm --platform node --target node20 --clean && node -e \"const fs=require('node:fs');for(const name of ['disable-ask-extension.mjs','additional-directories-extension.mjs'])fs.copyFileSync('src/runtime/omp/'+name,'dist/'+name)\"",
     "start": "node dist/index.js",
     "smoke:acp": "npm run build && node scripts/smoke-acp.mjs",
     "smoke:sdk-client": "npm run build && node scripts/smoke-sdk-client.mjs",

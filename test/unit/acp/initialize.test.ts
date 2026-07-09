@@ -30,7 +30,7 @@ test("buildInitialAgentCapabilities declares implemented rich prompt and session
     http: false,
     sse: false,
   });
-  assert.deepEqual(capabilities.sessionCapabilities, { list: {}, resume: {}, fork: {} });
+  assert.deepEqual(capabilities.sessionCapabilities, { list: {}, resume: {}, fork: {}, additionalDirectories: {} });
 });
 
 

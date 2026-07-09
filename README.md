@@ -32,6 +32,7 @@ Use [Oh My Pi](https://github.com/jiwangyihao/oh-my-pi) from [Agent Client Proto
 | Tool calls, updates, and diffs | Implemented | Runtime tool events, failures, cancellations, structured diffs, and host-tool results are surfaced as ACP updates. |
 | Session list/load/resume | Implemented | Reads OMP JSONL session history and safely replays renderable content. |
 | Session fork | Implemented, first phase | Forks from the source OMP session's persisted head; message-bound fork is not supported. |
+| Multi-root workspaces (`additionalDirectories`) | Implemented | Tracks the UNSTABLE ACP `additionalDirectories` field. Extra absolute workspace roots are surfaced to OMP through an injected extension that appends them to the system prompt; `cwd` remains the working directory. Session storage stays keyed by `cwd`, so the `session/list` `additionalDirectories` filter is not applied. |
 | Model/thinking/default mode controls | Implemented | Built from OMP `get_state` / `get_available_models`; thinking choices are clipped to current model metadata. |
 | OMP `confirm` | Partial | Bridged to ACP `session/request_permission`. |
 | OMP `setWidget` | Implemented | `widgetLines` are shown as ACP thought/progress text. |
@@ -163,12 +164,12 @@ More editor notes are in [Zed compatibility notes](./docs/compatibility/zed.md).
 By default the adapter constructs this runtime shape:
 
 ```bash
-omp --mode rpc --extension <adapter-disable-ask-extension.mjs>
+omp --mode rpc --extension <adapter-disable-ask-extension.mjs> --extension <adapter-additional-directories-extension.mjs>
 ```
 
 Do not use a static `--tools` allowlist just to disable `ask`. Static allowlists can hide user settings, plugin tools, extension tools, MCP tools, or future OMP tools. `omp-acp` removes only active `ask` through its injected extension and session setup guard.
 
-Use `OMP_ACP_RUNTIME_ARGS_JSON` only for fixtures, smoke tests, or unusual debugging. When provided, the adapter does not add `--mode rpc` for you; the full command must start a compatible OMP RPC runtime.
+Use `OMP_ACP_RUNTIME_ARGS_JSON` only for fixtures, smoke tests, or unusual debugging. When provided, the adapter does not add `--mode rpc` or the injected extensions for you; the full command must start a compatible OMP RPC runtime, and multi-root system-prompt context requires the `additional-directories` extension to be part of the override.
 
 ## Supported ACP surface
 

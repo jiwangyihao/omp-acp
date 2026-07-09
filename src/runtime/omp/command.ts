@@ -11,12 +11,29 @@ export type OmpRpcCommandOptions = {
 };
 
 const DISABLE_ASK_EXTENSION_PATH = fileURLToPath(new URL("./disable-ask-extension.mjs", import.meta.url));
+const ADDITIONAL_DIRECTORIES_EXTENSION_PATH = fileURLToPath(new URL("./additional-directories-extension.mjs", import.meta.url));
 
+export const OMP_ACP_ADDITIONAL_DIRS_ENV = "OMP_ACP_ADDITIONAL_DIRS_JSON";
+
+export function buildAdditionalDirectoriesEnv(additionalDirectories: readonly string[]): NodeJS.ProcessEnv {
+  if (additionalDirectories.length === 0) {
+    return {};
+  }
+  return { [OMP_ACP_ADDITIONAL_DIRS_ENV]: JSON.stringify(additionalDirectories) };
+}
 
 export function buildOmpRpcCommand(options: OmpRpcCommandOptions = {}): OmpRpcCommand {
   return {
     command: options.executable?.trim() || "omp",
-    args: ["--mode", "rpc", "--extension", DISABLE_ASK_EXTENSION_PATH, ...(options.extraArgs ?? [])],
+    args: [
+      "--mode",
+      "rpc",
+      "--extension",
+      DISABLE_ASK_EXTENSION_PATH,
+      "--extension",
+      ADDITIONAL_DIRECTORIES_EXTENSION_PATH,
+      ...(options.extraArgs ?? []),
+    ],
   };
 }
 
